@@ -406,7 +406,28 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .backup-summary span { margin-bottom: 4px; color: var(--muted); font-size: 11px; }
 .backup-summary strong { overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
 .import-summary { margin-top: 12px; }
-.course-import-dialog { width: min(850px, calc(100vw - 24px)); }
+.course-import-dialog { width: min(850px, calc(100vw - 24px)); display: flex; flex-direction: column; overflow: hidden; }
+.course-import-dialog > .dialog-heading { flex-shrink: 0; }
+.course-import-content { min-height: 0; overflow: auto; padding-right: 3px; }
+.course-source-summary { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; }
+.course-source-summary svg { flex: 0 0 auto; color: var(--muted); }
+.course-source-summary strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.course-source-summary button { flex: 0 0 auto; margin-right: 0; min-height: 36px; }
+.course-file-picker.is-dragging { border-color: #538bd5; background: #eaf3ff; }
+.course-input-actions, .course-selection-actions { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; }
+.course-input-actions button, .course-selection-actions button { min-height: 36px; text-align: left; }
+.course-paste { display: grid; gap: 8px; margin-top: 12px; }
+.course-paste label, .course-search { font-size: 12px; color: var(--muted); }
+.course-paste textarea { width: 100%; resize: vertical; min-height: 100px; max-height: 240px; border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--surface); color: var(--text); font-family: monospace; font-size: 13px; }
+.course-paste button { justify-self: start; }
+.course-preview-toolbar { display: grid; gap: 6px; margin-top: 12px; }
+.course-search { display: grid; gap: 6px; }
+.course-search input { min-width: 0; width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; }
+.course-selection-summary { font-size: 12px; color: var(--muted); margin: 8px 0; }
+.course-preview-toolbar + .course-selection-summary + .privacy-note { margin-bottom: 10px; }
+.course-lesson-choice { display: flex; align-items: flex-start; gap: 8px; min-height: 32px; cursor: pointer; }
+.course-lesson-choice input { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; accent-color: var(--strong); }
+.course-sample-note { color: #795d21; background: #fff8e7; }
 .course-import-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 16px 0; font-size: 13px; }
 .course-import-controls label { display: flex; align-items: center; gap: 8px; }
 .course-import-controls select, .course-selector select { width: auto; padding: 7px; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
@@ -425,13 +446,15 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .course-preview-row small { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .course-row-action { font-size: 12px; }
 .course-row-action label { margin-top: 8px; }
-.course-import-actions { position: sticky; bottom: -18px; z-index: 2; flex-wrap: wrap; padding: 12px 0 8px; background: var(--surface); }
+.course-import-actions { flex: 0 0 auto; flex-wrap: wrap; margin-top: 10px; padding: 8px 0 0; border-top: 1px solid var(--line); background: var(--surface); }
 .course-event-details { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 @media (max-width: 520px) {
   .course-selector { grid-template-columns: minmax(0, 1fr); }
   .course-selector { max-height: 140px; }
   .course-file-picker { grid-template-columns: auto minmax(0, 1fr); padding: 12px; }
-  .course-file-picker label { grid-column: 1 / -1; }
+  .course-file-picker button { grid-column: 1 / -1; width: 100%; }
+  .course-paste textarea, .course-search input, .course-import-controls select { font-size: 16px; }
+  .course-input-actions button, .course-selection-actions button { min-height: 44px; }
   .course-preview-row { grid-template-columns: minmax(0, 1fr); }
   .course-import-actions .text-button { flex-basis: 100%; text-align: left; }
 }
