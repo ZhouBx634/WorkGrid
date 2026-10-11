@@ -112,6 +112,16 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .plan-split-panel { display: grid; gap: 8px; padding: 10px 0; }
 .plan-split-panel label, .plan-split-panel small { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .plan-expand { display: flex; gap: 5px; align-items: center; padding: 8px 0 0; border: 0; background: transparent; color: #325a79; font-size: 12px; }
+.plan-expand svg { transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
+.plan-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+.plan-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 260ms cubic-bezier(.22, 1, .36, 1), opacity 260ms ease, visibility 0s 260ms; }
+.plan-disclosure.is-expanded { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+.plan-disclosure-clip { min-height: 0; overflow: hidden; }
+.plan-disclosure .plan-parts { transform: translateY(-4px); transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
+.plan-disclosure.is-expanded .plan-parts { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .plan-expand svg, .plan-disclosure, .plan-disclosure .plan-parts { transition: none; }
+}
 .plan-part { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .plan-parts { max-height: 360px; overflow-y: auto; padding-right: 3px; }
 .plan-part .task-card { flex: 1; min-width: 0; }
@@ -270,6 +280,11 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
 }
 .calendar-event:hover { z-index: 5; box-shadow: 0 7px 18px rgba(31,38,43,.16); }
+.event-move-handle { position: absolute; left: 0; top: 0; bottom: 0; width: 20px; border: 0; border-radius: 0; padding: 0; display: grid; place-items: center; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); background: transparent; cursor: grab; touch-action: none; opacity: .5; }
+.event-move-handle svg { max-height: 100%; pointer-events: none; }
+.calendar-event:hover .event-move-handle, .event-move-handle:focus-visible, .calendar-event.is-compact .event-move-handle { opacity: 1; }
+.event-move-handle:hover, .event-move-handle:focus-visible { background: color-mix(in srgb, var(--task-color) 12%, transparent); }
+.event-move-handle:active { cursor: grabbing; }
 .event-main { min-width: 0; }
 .event-main strong, .event-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-main strong { font-size: 12px; font-weight: 600; }
@@ -280,10 +295,12 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .calendar-event.is-tiny { padding: 0 4px; }
 .calendar-event.is-tiny .event-main span { display: none; }
 .calendar-event.is-tiny .event-main strong { font-size: 10px; line-height: 11px; }
+.calendar-event:not(.is-batch-mode) { padding-left: 25px; }
 .event-actions { position: absolute; top: 3px; right: 3px; display: flex; gap: 2px; opacity: 0; }
 .calendar-event:hover .event-actions, .calendar-event:focus-within .event-actions { opacity: 1; }
 .event-actions button { width: 23px; height: 23px; display: grid; place-items: center; padding: 0; color: var(--text); border: 0; border-radius: 4px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
-.resize-handle { position: absolute; left: 7px; right: 7px; bottom: 1px; height: 5px; padding: 0; border: 0; border-radius: 3px; background: color-mix(in srgb, var(--task-color) 55%, transparent); cursor: ns-resize; opacity: 0; }
+.resize-handle { position: absolute; right: 3px; bottom: 1px; width: 18px; max-width: max(0px, calc(100% - 25px)); height: 10px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: ns-resize; opacity: 0; touch-action: none; }
+.resize-handle::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--task-color) 65%, transparent); }
 .calendar-event:hover .resize-handle, .resize-handle:focus-visible { opacity: 1; }
 .calendar-event.status-in-progress { box-shadow: inset 0 0 0 1px var(--task-color), 0 4px 12px rgba(31,38,43,.1); }
 .calendar-event.status-completed { filter: saturate(.55); opacity: .66; }

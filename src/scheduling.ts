@@ -21,7 +21,9 @@ export function endFromDuration(start: string, duration: string) {
 export function dropDateFromPosition(day: Date, pointerY: number, trackTop: number, slotHeight: number, slotMinutes = 15, startMinutes = 0, endMinutes = 1440) {
   const slotCount = (endMinutes - startMinutes) / slotMinutes
   const relativeY = Math.max(0, Math.min(slotCount * slotHeight - 0.000001, pointerY - trackTop))
-  const slotIndex = Math.floor(relativeY / slotHeight)
+  // Fractional CSS grid sizes round to subpixels. A visually aligned edge can be
+  // a few hundredths of a pixel before its mathematical boundary; never shift it a full slot.
+  const slotIndex = Math.min(slotCount - 1, Math.floor((relativeY + 1 / 32) / slotHeight))
   const result = new Date(day)
   result.setHours(0, startMinutes + slotIndex * slotMinutes, 0, 0)
   return result

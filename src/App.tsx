@@ -132,20 +132,21 @@ function DroppableDayTrack({ day, guide, children }: { day: Date; guide: DragGui
   return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`} data-day={day.toISOString()}>{children}{visibleGuide && <div className="drag-time-guide" style={{ top: visibleGuide.top }} data-time={guideTime} aria-hidden="true"><span>{guideTime}</span></div>}</div>
 }
 
-function CalendarEvent({ item, duration, batchMode, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
-  item: LaidOutTask; duration: number; batchMode: boolean; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void; onStatus: (status: TaskStatus) => void; onResize: (event: React.PointerEvent) => void
+function CalendarEvent({ item, duration, isResizing, batchMode, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
+  item: LaidOutTask; duration: number; isResizing: boolean; batchMode: boolean; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void; onStatus: (status: TaskStatus) => void; onResize: (event: React.PointerEvent) => void
 }) {
   const { task } = item
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
   const start = new Date(task.start!)
   const end = addMinutes(start, duration)
   const style = { top: item.top, height: item.height, left: `calc(${(item.lane / item.laneCount) * 100}% + 3px)`, width: `calc(${100 / item.laneCount}% - 6px)` }
   return (
-    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>
+    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${batchMode ? ' is-batch-mode' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>
       {batchMode && <SelectionMark selected={batchSelected} />}
+      {!batchMode && <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title="按住拖动移动日程" onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation() }}><GripVertical size={14} aria-hidden="true" /></button>}
       <div className="event-main"><strong>{task.title}</strong><span>{format(start, 'HH:mm')} - {format(end, 'HH:mm')}</span>{task.calendarImport && <small className="course-event-details" title={[task.calendarImport.location, task.calendarImport.teacher, task.calendarImport.teachingClass].filter(Boolean).join(' · ')}>{[task.calendarImport.location, task.calendarImport.teacher].filter(Boolean).join(' · ')}</small>}</div>
       {!batchMode && <div className="event-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{task.status === 'completed' ? <button type="button" aria-label="重新打开" title="重新打开" onClick={() => onStatus('todo')}><RotateCcw size={13} /></button> : <><button type="button" aria-label={task.status === 'in-progress' ? '暂停' : '开始'} title={task.status === 'in-progress' ? '暂停' : '开始'} onClick={() => onStatus(task.status === 'in-progress' ? 'todo' : 'in-progress')}>{task.status === 'in-progress' ? <Pause size={13} /> : <Play size={13} />}</button><button type="button" aria-label="完成" title="完成" onClick={() => onStatus('completed')}><Check size={14} /></button></>}</div>}
-      {!batchMode && <button className="resize-handle" type="button" aria-label="调整时长" title="拖动调整时长" onPointerDown={onResize} onClick={(event) => { event.preventDefault(); event.stopPropagation() }} />}
+      {!batchMode && (item.height >= 42 || isResizing) && <button className="resize-handle" type="button" aria-label="调整时长" title="上下拖动调整时长" onPointerDown={onResize} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation() }} />}
     </article>
   )
 }
@@ -184,6 +185,8 @@ function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
   const [editingDraft, setEditingDraft] = useState<TaskDraft>(EMPTY_DRAFT)
   const [editingDuration, setEditingDuration] = useState('60')
   const [editingStart, setEditingStart] = useState('')
@@ -586,15 +589,36 @@ function App() {
     }))
   }
   function startResize(event: React.PointerEvent, task: Task) {
-    if (event.pointerType === 'touch') return
-    event.preventDefault(); event.stopPropagation(); const startY = event.clientY; const original = task.duration
-    const onMove = (moveEvent: PointerEvent) => { const slots = Math.round((moveEvent.clientY - startY) / slotHeight); setResizePreview({ id: task.id, duration: Math.max(15, Math.min(720, original + slots * SLOT_MINUTES)) }) }
-    const onUp = (upEvent: PointerEvent) => {
-      const slots = Math.round((upEvent.clientY - startY) / slotHeight); const duration = Math.max(15, Math.min(720, original + slots * SLOT_MINUTES))
-      commitTaskChange('时长调整', `时长已调整为 ${durationLabel(duration)}`, (current) => current.map((item) => item.id === task.id ? { ...item, duration, endRemindedAt: null } : item)); setResizePreview(null)
-      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
+    if (event.pointerType === 'touch' || event.button !== 0) return
+    event.preventDefault(); event.stopPropagation(); resizeCleanupRef.current?.()
+    const startY = event.clientY; const original = task.duration; const pointerId = event.pointerId
+    const handle = event.currentTarget as HTMLElement
+    try { handle.setPointerCapture(pointerId) } catch { /* Synthetic events have no active pointer. */ }
+    setResizePreview({ id: task.id, duration: original })
+    const suppressClick = (click: MouseEvent) => {
+      if (click.target instanceof Element && click.target.closest('.calendar-event')) { click.preventDefault(); click.stopImmediatePropagation() }
     }
-    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp)
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel)
+      try { if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId) } catch { /* The pointer may already be released. */ }
+    }
+    const finish = () => {
+      cleanup(); setResizePreview(null)
+      // The browser's click follows pointerup; keep the guard until that event has finished.
+      const timer = window.setTimeout(() => { window.removeEventListener('click', suppressClick, true); resizeCleanupRef.current = null }, 0)
+      resizeCleanupRef.current = () => { window.clearTimeout(timer); window.removeEventListener('click', suppressClick, true) }
+    }
+    const onMove = (moveEvent: PointerEvent) => { if (moveEvent.pointerId !== pointerId) return; const slots = Math.round((moveEvent.clientY - startY) / slotHeight); setResizePreview({ id: task.id, duration: slots === 0 ? original : Math.max(15, Math.min(720, original + slots * SLOT_MINUTES)) }) }
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return
+      const slots = Math.round((upEvent.clientY - startY) / slotHeight); const duration = slots === 0 ? original : Math.max(15, Math.min(720, original + slots * SLOT_MINUTES))
+      if (duration !== original) commitTaskChange('时长调整', `时长已调整为 ${durationLabel(duration)}`, (current) => current.map((item) => item.id === task.id ? { ...item, duration, endRemindedAt: null } : item))
+      finish()
+    }
+    const onCancel = (cancelEvent: PointerEvent) => { if (cancelEvent.pointerId === pointerId) finish() }
+    window.addEventListener('click', suppressClick, true)
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel)
+    resizeCleanupRef.current = () => { cleanup(); window.removeEventListener('click', suppressClick, true) }
   }
   function toggleBatchMode() { setBatchMode((current) => !current); setBatchSelection(new Set()); setSelectedTaskId(null) }
   function toggleBatchTask(taskId: string) { setBatchSelection((current) => { const next = new Set(current); next.has(taskId) ? next.delete(taskId) : next.add(taskId); return next }) }
@@ -658,7 +682,7 @@ function App() {
       <div className="time-rail">{Array.from({ length: (timeRange.end - timeRange.start) / 60 + 1 }, (_, index) => <span key={index} style={{ top: index * slotHeight * 4 }} hidden={slotHeight < 6 && index % 2 !== 0 && index !== (timeRange.end - timeRange.start) / 60}>{String(timeRange.start / 60 + index).padStart(2, '0')}:00</span>)}</div>
       {days.map((day) => {
         const layout = layoutDayTasks(filteredTasks.filter((task) => task.start && isSameDay(new Date(task.start), day)), resizePreview, slotHeight, timeRange)
-        return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(0, timeRange.start + slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
+        return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(0, timeRange.start + slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} isResizing={resizePreview?.id === item.task.id} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
       })}
     </div>
   }

@@ -178,7 +178,7 @@ for (const zoom of ['50%', '全天', '150%', '聚焦']) {
 }
 
 for (const zoom of ['50%', '全天', '150%', '聚焦']) {
-  test(`duration resize uses the scaled height at ${zoom}`, async ({ page }, testInfo) => {
+  test(`duration resizing respects usable event height at ${zoom}`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop-chromium', 'Resize handle is desktop-only')
     await setup(page, [task('调整任务', 9)])
     if (zoom === '聚焦') {
@@ -187,6 +187,11 @@ for (const zoom of ['50%', '全天', '150%', '聚焦']) {
     } else if (zoom === '全天') await page.getByRole('button', { name: '全天总览' }).click()
     else for (let i = 0; i < 2; i++) await page.getByRole('button', { name: zoom === '50%' ? '缩小日历' : '放大日历', exact: true }).click()
     const slotHeight = await height(page)
+    if (await page.locator('.calendar-event').evaluate(element => element.getBoundingClientRect().height < 42)) {
+      await expect(page.locator('.resize-handle')).toHaveCount(0)
+      expect((await saved(page))[0].duration).toBe(60)
+      return
+    }
     const handle = page.getByRole('button', { name: '调整时长' })
     await handle.evaluate((element, delta) => {
       const box = element.getBoundingClientRect()
