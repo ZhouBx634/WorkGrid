@@ -51,6 +51,14 @@ for (const height of [5.5, 11, 16.5, 22, 33, fitSlotHeight(648)]) {
   assert.deepEqual([focusedLast.getHours(), focusedLast.getMinutes()], [21, 45])
 }
 
+// Real mobile focus geometry: grid layout yields 498.6875 rather than 498.695.
+const roundedFocus = dropDateFromPosition(day, 498.6875, 460.625, 6.344999999999999, 15, 480, 1440)
+assert.deepEqual([roundedFocus.getHours(), roundedFocus.getMinutes()], [9, 30])
+const trulyBeforeBoundary = dropDateFromPosition(day, 498.595, 460.625, 6.344999999999999, 15, 480, 1440)
+assert.deepEqual([trulyBeforeBoundary.getHours(), trulyBeforeBoundary.getMinutes()], [9, 15])
+const roundedLast = dropDateFromPosition(day, 100 + 96 * 6.345, 100, 6.345)
+assert.deepEqual([roundedLast.getHours(), roundedLast.getMinutes()], [23, 45])
+
 const scheduledTask = {
   id: 'regression-task',
   title: '回归测试',
