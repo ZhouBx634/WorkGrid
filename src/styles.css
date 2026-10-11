@@ -302,6 +302,17 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .resize-handle { position: absolute; right: 3px; bottom: 1px; width: 18px; max-width: max(0px, calc(100% - 25px)); height: 10px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: ns-resize; opacity: 0; touch-action: none; }
 .resize-handle::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--task-color) 65%, transparent); }
 .calendar-event:hover .resize-handle, .resize-handle:focus-visible { opacity: 1; }
+.resize-handle svg { display: none; pointer-events: none; }
+@media (min-width: 901px) {
+  .calendar-event.is-split-handles:not(.is-batch-mode) { padding-left: 23px; padding-right: 21px; }
+  .is-split-handles .event-move-handle { width: 50%; justify-items: start; padding-left: 3px; }
+  .is-split-handles .resize-handle { top: 0; right: 0; bottom: 0; width: 50%; max-width: none; height: auto; border-radius: 0; border-left: 1px solid color-mix(in srgb, var(--task-color) 20%, transparent); display: grid; justify-items: end; align-items: center; padding-right: 3px; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); opacity: 1; }
+  .is-split-handles .resize-handle::after { display: none; }
+  .is-split-handles .resize-handle svg { display: block; max-height: 100%; }
+  .is-split-handles .resize-handle:hover, .is-split-handles .resize-handle:focus-visible { background: color-mix(in srgb, var(--task-color) 12%, transparent); }
+  .is-split-handles:not(.is-batch-mode) .event-main { position: relative; z-index: 1; pointer-events: none; }
+  .is-split-handles .event-actions { display: none; }
+}
 .calendar-event.status-in-progress { box-shadow: inset 0 0 0 1px var(--task-color), 0 4px 12px rgba(31,38,43,.1); }
 .calendar-event.status-completed { filter: saturate(.55); opacity: .66; }
 .calendar-event.status-completed .event-main strong { text-decoration: line-through; }

@@ -22,11 +22,13 @@ async function sampleToggle(button: Locator) {
   return button.evaluate(async element => {
     const panel = document.getElementById(element.getAttribute('aria-controls')!)!
     const samples: number[] = [panel.getBoundingClientRect().height]
+    const expanded = element.getAttribute('aria-expanded')
     ;(element as HTMLElement).click()
     const start = performance.now()
-    while (performance.now() - start < 330) {
+    while (performance.now() - start < 2000) {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       samples.push(panel.getBoundingClientRect().height)
+      if (element.getAttribute('aria-expanded') !== expanded && panel.getAnimations({ subtree: true }).length === 0) break
     }
     return samples
   })
@@ -73,7 +75,7 @@ test('rapid disclosure reversal keeps its current height and reduced motion has 
     const panel = document.getElementById(element.getAttribute('aria-controls')!)!
     ;(element as HTMLElement).click()
     const start = performance.now()
-    while (performance.now() - start < 65) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    while (panel.getBoundingClientRect().height === 0 && performance.now() - start < 2000) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     const before = panel.getBoundingClientRect().height
     ;(element as HTMLElement).click()
     const after = panel.getBoundingClientRect().height
@@ -108,13 +110,18 @@ for (const focus of [false, true]) {
     const grip = event.getByRole('button', { name: `拖动移动 ${short.title}` })
     await event.scrollIntoViewIfNeeded()
     expect((await event.boundingBox())!.height).toBeLessThan(42)
-    await expect(event.locator('.resize-handle')).toHaveCount(0)
+    if (testInfo.project.name === 'desktop-chromium') await expect(event.locator('.resize-handle')).toBeVisible()
+    else await expect(event.locator('.resize-handle')).toBeHidden()
     await expect(grip).toBeVisible()
     const timeline = page.locator('.duration-timeline')
     const rangeStart = Number(await timeline.getAttribute('data-range-start'))
     const slot = page.locator('.day-track').first().locator('.drop-slot').nth((9 * 60 + 30 - rangeStart) / 15)
     const fromBox = (await grip.boundingBox())!, toBox = (await slot.boundingBox())!
-    expect(fromBox.x + fromBox.width).toBeLessThanOrEqual((await event.locator('.event-main').boundingBox())!.x)
+    if (testInfo.project.name === 'desktop-chromium') {
+      const right = (await event.locator('.resize-handle').boundingBox())!
+      expect(fromBox.width).toBeCloseTo(right.width, 0)
+      expect(fromBox.x + fromBox.width).toBeCloseTo(right.x, 0)
+    }
     const from = { x: fromBox.x + fromBox.width / 2, y: fromBox.y + fromBox.height / 2 }
     const to = { x: toBox.x + 100, y: toBox.y + toBox.height / 2 }
     const mobile = testInfo.project.name === 'mobile-chromium'
@@ -134,23 +141,37 @@ for (const focus of [false, true]) {
     expect((await saved(page))[0].duration).toBe(15)
     expect((await saved(page))[1]).toEqual(anchor)
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await event.locator('.event-main').click()
+    if (mobile) await event.locator('.event-main').click()
+    else await grip.click()
     await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toBeVisible()
   })
 }
 
-test('resize visibility follows pixel height and the two handles never overlap', async ({ page }, testInfo) => {
+test('short events split into equal hit areas at every scale, including overlapping lanes', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop-only resizing')
-  await setup(page, [task('短任务', 9), task('普通任务', 10, 60)])
+  await setup(page, [task('短任务', 9), task('重叠任务', 9), task('普通任务', 10, 60)])
   const short = page.locator('.calendar-event', { hasText: '短任务' })
   const ordinary = page.locator('.calendar-event', { hasText: '普通任务' })
-  await expect(short.locator('.resize-handle')).toHaveCount(0)
+  async function halves(event: Locator) {
+    await event.scrollIntoViewIfNeeded()
+    const move = (await event.locator('.event-move-handle').boundingBox())!
+    const resize = (await event.locator('.resize-handle').boundingBox())!
+    const box = (await event.boundingBox())!
+    expect(move.width).toBeCloseTo(resize.width, 0)
+    expect(move.x + move.width).toBeCloseTo(resize.x, 0)
+    expect(move.height).toBeCloseTo(box.height, 0)
+    expect(resize.height).toBeCloseTo(box.height, 0)
+    for (const [area, expected] of [[move, 'event-move-handle'], [resize, 'resize-handle']] as const) {
+      expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.className, { x: area.x + area.width / 2, y: area.y + area.height / 2 })).toBe(expected)
+    }
+  }
+  await halves(short)
   await ordinary.scrollIntoViewIfNeeded(); await ordinary.hover()
   const move = (await ordinary.locator('.event-move-handle').boundingBox())!
   const resize = (await ordinary.locator('.resize-handle').boundingBox())!
   expect(move.x + move.width).toBeLessThanOrEqual(resize.x)
   await page.getByRole('button', { name: '全天总览' }).click()
-  await expect(ordinary.locator('.resize-handle')).toHaveCount(0)
+  await halves(ordinary)
   await page.setViewportSize({ width: 1440, height: 1600 })
   await page.getByRole('button', { name: '聚焦日程' }).click()
   await expect(page.locator('.duration-timeline')).toHaveAttribute('aria-busy', 'false')
@@ -176,9 +197,9 @@ test('real mouse resizing changes only duration, keeps capture when shrinking, a
   await page.mouse.up()
   await expect.poll(async () => (await saved(page))[0].duration).toBe(15)
   expect((await saved(page))[0].start).toBe(initial.start)
-  await expect(event.locator('.resize-handle')).toHaveCount(0)
+  await expect(event.locator('.resize-handle')).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await event.locator('.event-main').click()
+  await event.locator('.event-move-handle').click()
   await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toBeVisible()
 })
 
@@ -199,3 +220,48 @@ test('pointer cancellation or clicking a resize handle does not write data or bl
   await page.locator('.calendar-event .event-main').click()
   await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toBeVisible()
 })
+
+for (const zoom of ['default', 'overview', 'focus']) {
+  test(`short event right half resizes without moving or opening an editor (${zoom})`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop-only resizing')
+    const initial = task('左右半区任务', 9)
+    const anchor = task('晚间锚点', 22, 60)
+    await setup(page, [initial, anchor])
+    await page.getByRole('group', { name: '日历视图' }).getByRole('button', { name: '日', exact: true }).click()
+    if (zoom === 'overview') await page.getByRole('button', { name: '全天总览' }).click()
+    if (zoom === 'focus') await page.getByRole('button', { name: '聚焦日程', exact: true }).click()
+    await expect(page.locator('.duration-timeline')).toHaveAttribute('aria-busy', 'false')
+    const event = page.locator('.calendar-event', { hasText: initial.title })
+    await event.scrollIntoViewIfNeeded()
+    const handle = event.locator('.resize-handle')
+    const left = (await event.locator('.event-move-handle').boundingBox())!
+    const right = (await handle.boundingBox())!
+    expect(right.width).toBeCloseTo(left.width, 0)
+    const slotHeight = await page.locator('.duration-timeline').evaluate(element => Number.parseFloat((element as HTMLElement).style.getPropertyValue('--slot-height')))
+    const x = right.x + right.width / 2, y = right.y + right.height / 2
+    await page.mouse.move(x, y); await page.mouse.down()
+    await page.mouse.move(x, y + 2 * slotHeight, { steps: 8 })
+    // Crossing the compact-height threshold must retain the initial half-width handle.
+    expect((await handle.boundingBox())!.width).toBeCloseTo(right.width, 0)
+    await expect(page.locator('.drag-overlay, .drag-time-guide')).toHaveCount(0)
+    await page.mouse.up()
+    await expect.poll(async () => (await saved(page))[0].duration).toBe(45)
+    expect((await saved(page))[0].start).toBe(initial.start)
+    expect((await saved(page))[1]).toEqual(anchor)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.getByRole('button', { name: '撤销', exact: true }).click()
+    expect(await saved(page)).toEqual([initial, anchor])
+    await handle.click()
+    expect(await saved(page)).toEqual([initial, anchor])
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    // A cancelled gesture also leaves the original time and duration intact.
+    await handle.evaluate(element => {
+      element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', pointerId: 7, button: 0, clientY: 100 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientY: 144 }))
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 7 }))
+    })
+    expect(await saved(page)).toEqual([initial, anchor])
+    await event.locator('.event-move-handle').click()
+    await expect(page.getByRole('dialog', { name: '编辑工作方块' })).toBeVisible()
+  })
+}

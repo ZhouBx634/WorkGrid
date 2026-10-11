@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
-import { Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpDown, Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { addMinutes, format, isBefore, isSameDay, startOfDay } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { monthDays, monthLabel, moveAnchor, normalizeDropDate, taskIsVisible, taskStartsIn, viewTitle, weekDays } from './calendar'
@@ -137,16 +137,18 @@ function CalendarEvent({ item, duration, isResizing, batchMode, batchSelected, o
 }) {
   const { task } = item
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
+  const resizeStartedCompact = useRef(false)
+  const splitHandles = item.height < 42 || (isResizing && resizeStartedCompact.current)
   const start = new Date(task.start!)
   const end = addMinutes(start, duration)
   const style = { top: item.top, height: item.height, left: `calc(${(item.lane / item.laneCount) * 100}% + 3px)`, width: `calc(${100 / item.laneCount}% - 6px)` }
   return (
-    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${batchMode ? ' is-batch-mode' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>
+    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${splitHandles ? ' is-split-handles' : ''}${batchMode ? ' is-batch-mode' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>
       {batchMode && <SelectionMark selected={batchSelected} />}
-      {!batchMode && <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title="按住拖动移动日程" onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation() }}><GripVertical size={14} aria-hidden="true" /></button>}
+      {!batchMode && <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title={splitHandles ? '左半边拖动移动，点击编辑' : '按住拖动移动日程'} onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (splitHandles && !isDragging) onOpen() }}><GripVertical size={14} aria-hidden="true" /></button>}
       <div className="event-main"><strong>{task.title}</strong><span>{format(start, 'HH:mm')} - {format(end, 'HH:mm')}</span>{task.calendarImport && <small className="course-event-details" title={[task.calendarImport.location, task.calendarImport.teacher, task.calendarImport.teachingClass].filter(Boolean).join(' · ')}>{[task.calendarImport.location, task.calendarImport.teacher].filter(Boolean).join(' · ')}</small>}</div>
       {!batchMode && <div className="event-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{task.status === 'completed' ? <button type="button" aria-label="重新打开" title="重新打开" onClick={() => onStatus('todo')}><RotateCcw size={13} /></button> : <><button type="button" aria-label={task.status === 'in-progress' ? '暂停' : '开始'} title={task.status === 'in-progress' ? '暂停' : '开始'} onClick={() => onStatus(task.status === 'in-progress' ? 'todo' : 'in-progress')}>{task.status === 'in-progress' ? <Pause size={13} /> : <Play size={13} />}</button><button type="button" aria-label="完成" title="完成" onClick={() => onStatus('completed')}><Check size={14} /></button></>}</div>}
-      {!batchMode && (item.height >= 42 || isResizing) && <button className="resize-handle" type="button" aria-label="调整时长" title="上下拖动调整时长" onPointerDown={onResize} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation() }} />}
+      {!batchMode && <button className="resize-handle" type="button" aria-label="调整时长" title={splitHandles ? '右半边上下拖动调整时长' : '上下拖动调整时长'} onPointerDown={(event) => { resizeStartedCompact.current = item.height < 42; onResize(event) }} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation() }}><ArrowUpDown size={13} aria-hidden="true" /></button>}
     </article>
   )
 }
