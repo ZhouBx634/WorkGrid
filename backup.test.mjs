@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   BackupError,
   createBackup,
@@ -17,13 +18,14 @@ const task = {
 }
 
 const backup = createBackup([task])
+assert.equal(backup.appVersion, JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version)
 const parsed = parseBackupText(JSON.stringify(backup))
 assert.equal(parsed.taskCount, 1)
 assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: [], deletedAt: null })
 
 const versionOneBackup = { ...backup, schemaVersion: 1 }
 const migrated = parseBackupText(JSON.stringify(versionOneBackup))
-assert.equal(migrated.schemaVersion, 7)
+assert.equal(migrated.schemaVersion, 8)
 assert.equal(migrated.tasks[0].status, 'todo')
 assert.equal(migrated.tasks[0].completedAt, null)
 assert.equal(migrated.tasks[0].reminderMinutes, null)

@@ -3,6 +3,7 @@ import { parseCourseCalendar, applyCourseImport, classifyCourse, undoCourseImpor
 import { createBackup, parseBackupText, validateTaskList, planImport } from './src/backup.ts'
 import { parseCloudSnapshot } from './src/cloudData.ts'
 import { saveCourseRecovery, loadCourseRecovery, clearCourseRecovery } from './src/courseRecovery.ts'
+import { courseInRange, courseMatchesSearch, createSampleCourseCalendar } from './src/courseImportPreview.ts'
 
 const now = new Date('2026-10-09T02:30:00Z')
 function event({ uid = 'course-1', start = '20261012T083000', end = '20261012T100000', title = '数学', extra = '', tz = ';TZID=Asia/Shanghai' } = {}) {
@@ -116,4 +117,44 @@ const dst = await parseCourseCalendar(calendar(event({ tz: ';TZID=America/New_Yo
 assert.deepEqual(dst.events.map(e => e.start), ['2026-10-26T12:30:00.000Z', '2026-11-02T13:30:00.000Z'])
 await assert.rejects(parseCourseCalendar(calendar(event({ extra: 'RRULE:FREQ=SECONDLY;COUNT=999999999\r\n' })), now), /暂不支持/)
 await assert.rejects(parseCourseCalendar(' '.repeat(2 * 1024 * 1024 + 1)), /2MB/)
+
+// Preview range uses whole local calendar days and an exclusive end, not elapsed UTC hours.
+const originalTimezone = process.env.TZ
+process.env.TZ = 'Asia/Shanghai'
+const rangeNow = new Date('2026-10-09T10:30:00Z')
+const occurrence = (start) => ({ ...parsed.events[0], start })
+assert.equal(courseInRange(occurrence('2026-10-08T15:59:00Z'), 'future', rangeNow), false)
+assert.equal(courseInRange(occurrence('2026-10-08T16:00:00Z'), 'future', rangeNow), true)
+assert.equal(courseInRange(occurrence('2026-11-05T15:59:00Z'), '4weeks', rangeNow), true)
+assert.equal(courseInRange(occurrence('2026-11-05T16:00:00Z'), '4weeks', rangeNow), false)
+assert.equal(courseInRange(occurrence('2026-11-19T15:59:00Z'), '6weeks', rangeNow), true)
+assert.equal(courseInRange(occurrence('2026-11-19T16:00:00Z'), '6weeks', rangeNow), false)
+assert.equal(courseInRange(occurrence('2027-01-14T15:59:00Z'), '14weeks', rangeNow), true)
+assert.equal(courseInRange(occurrence('2027-01-14T16:00:00Z'), '14weeks', rangeNow), false)
+assert.equal(courseInRange(occurrence('2020-01-01T00:00:00Z'), 'all', rangeNow), true)
+process.env.TZ = 'America/New_York'
+assert.equal(courseInRange(occurrence('2026-11-06T04:59:00Z'), '4weeks', new Date('2026-10-09T12:00:00Z')), true)
+assert.equal(courseInRange(occurrence('2026-11-06T05:00:00Z'), '4weeks', new Date('2026-10-09T12:00:00Z')), false)
+if (originalTimezone === undefined) delete process.env.TZ
+else process.env.TZ = originalTimezone
+
+assert.equal(courseMatchesSearch(parsed.events[0], ' 数学 '), true)
+assert.equal(courseMatchesSearch(parsed.events[0], '教室甲'), true)
+assert.equal(courseMatchesSearch(parsed.events[0], '教师乙'), true)
+assert.equal(courseMatchesSearch(parsed.events[0], '班级甲'), true)
+assert.equal(courseMatchesSearch({ ...parsed.events[0], course: 'Python Programming' }, 'PYTHON'), true)
+assert.equal(courseMatchesSearch(parsed.events[0], ''), true)
+assert.equal(courseMatchesSearch(parsed.events[0], 'not-found'), false)
+for (const date of ['2026-10-10T02:30:00Z', '2026-12-31T02:30:00Z', '2027-04-01T02:30:00Z']) {
+  const sampleNow = new Date(date)
+  const demo = await parseCourseCalendar(createSampleCourseCalendar(sampleNow), sampleNow)
+  assert.equal(demo.name, 'WorkGrid 示例课表')
+  assert.equal(demo.events.length, 12)
+  assert.equal(new Set(demo.events.map(item => item.course)).size, 3)
+  assert.equal(new Set(demo.events.map(item => item.key)).size, 12)
+  assert.ok(demo.events.every(item => Date.parse(item.start) > sampleNow.getTime() && item.course.startsWith('示例 · ')))
+  const sampleImport = applyCourseImport([original], demo.events)
+  assert.deepEqual(undoCourseImport(sampleImport.tasks, sampleImport.changes).tasks, [original])
+  assert.equal(applyCourseImport(sampleImport.tasks, demo.events).added, 0)
+}
 console.log('course import tests passed: isolation, duplicates, updates, safe undo, backup/cloud, ICS recurrence and security')

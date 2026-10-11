@@ -37,6 +37,18 @@ export interface Task {
   seriesId?: string | null
   recurrence?: RecurrenceRule | null
   calendarImport?: CalendarImportSource
+  // Plan records share the existing atomic storage/sync document, but never enter the calendar.
+  planDefinition?: LongTermPlan
+  planAllocation?: { planId: string; units: number[] }
+}
+
+export interface LongTermPlan {
+  type: 'countable' | 'deadline'
+  totalUnits: number
+  unitLabel: string
+  deadline: string | null
+  notes: string
+  reminderMinutes: number | null
 }
 
 export interface CalendarImportSource {
@@ -61,7 +73,7 @@ export interface TaskDraft {
 
 export interface WorkGridBackup {
   format: 'workgrid-backup'
-  schemaVersion: 7
+  schemaVersion: 8
   appVersion: string
   exportedAt: string
   taskCount: number

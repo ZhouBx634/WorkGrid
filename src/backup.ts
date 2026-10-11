@@ -1,9 +1,9 @@
 import type { Task, TaskColor, WorkGridBackup } from './types'
 
 export const BACKUP_FORMAT = 'workgrid-backup'
-export const BACKUP_SCHEMA_VERSION = 7
+export const BACKUP_SCHEMA_VERSION = 8
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.11.0'
+export const APP_VERSION = '0.12.0'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
@@ -113,6 +113,31 @@ function validateTask(value: unknown, index: number): Task {
     }
   }
 
+  const planDefinition = value.planDefinition
+  const planAllocation = value.planAllocation
+  if (planDefinition !== undefined) {
+    if (!isRecord(planDefinition) || !['countable', 'deadline'].includes(String(planDefinition.type))
+      || !Number.isInteger(planDefinition.totalUnits) || Number(planDefinition.totalUnits) < 0 || Number(planDefinition.totalUnits) > 500
+      || (planDefinition.type === 'countable' && Number(planDefinition.totalUnits) < 1)
+      || (planDefinition.type === 'deadline' && planDefinition.totalUnits !== 0)
+      || typeof planDefinition.unitLabel !== 'string' || !planDefinition.unitLabel.trim() || planDefinition.unitLabel.length > 8
+      || (planDefinition.deadline !== null && !isIsoDate(planDefinition.deadline))
+      || (planDefinition.type === 'deadline' && planDefinition.deadline === null)
+      || typeof planDefinition.notes !== 'string' || planDefinition.notes.length > 1000
+      || (planDefinition.reminderMinutes !== null && (typeof planDefinition.reminderMinutes !== 'number' || ![0, 60, 1440, 10080].includes(planDefinition.reminderMinutes)))
+      || start !== null || deletedAt !== null || calendarImport !== undefined || seriesId !== null || recurrence !== null || planAllocation !== undefined) {
+      throw new BackupError(`第 ${index + 1} 个长期计划格式无效`)
+    }
+  }
+  if (planAllocation !== undefined) {
+    if (!isRecord(planAllocation) || typeof planAllocation.planId !== 'string' || !planAllocation.planId || planAllocation.planId.length > 200
+      || !Array.isArray(planAllocation.units) || planAllocation.units.length > 500
+      || planAllocation.units.some((unit) => !Number.isInteger(unit) || Number(unit) < 1 || Number(unit) > 500)
+      || new Set(planAllocation.units).size !== planAllocation.units.length || calendarImport !== undefined || seriesId !== null || recurrence !== null) {
+      throw new BackupError(`第 ${index + 1} 个日程的计划关联无效`)
+    }
+  }
+
   return {
     id,
     title: title.trim(),
@@ -131,6 +156,8 @@ function validateTask(value: unknown, index: number): Task {
     ...(seriesId !== null ? { seriesId: seriesId as string } : {}),
     ...(recurrence !== null ? { recurrence: recurrence as unknown as Task['recurrence'] } : {}),
     ...(calendarImport !== undefined ? { calendarImport: calendarImport as unknown as Task['calendarImport'] } : {}),
+    ...(planDefinition !== undefined ? { planDefinition: planDefinition as unknown as Task['planDefinition'] } : {}),
+    ...(planAllocation !== undefined ? { planAllocation: planAllocation as unknown as Task['planAllocation'] } : {}),
   }
 }
 
@@ -141,6 +168,23 @@ export function validateTaskList(value: unknown): Task[] {
   for (const task of tasks) {
     if (ids.has(task.id)) throw new BackupError('工作方块列表中包含重复编号')
     ids.add(task.id)
+  }
+  const plans = new Map(tasks.filter((task) => task.planDefinition).map((task) => [task.id, task]))
+  const usedUnits = new Set<string>()
+  for (const task of tasks) {
+    if (!task.planAllocation) continue
+    const plan = plans.get(task.planAllocation.planId)?.planDefinition
+    if (!plan) throw new BackupError('日程关联的长期计划不存在')
+    if (plan.type === 'deadline') {
+      if (task.planAllocation.units.length) throw new BackupError('截止计划不能包含编号节次')
+      continue
+    }
+    if (!task.planAllocation.units.length) throw new BackupError('定量计划日程缺少节次编号')
+    for (const unit of task.planAllocation.units) {
+      const key = `${task.planAllocation.planId}:${unit}`
+      if (unit > plan.totalUnits || usedUnits.has(key)) throw new BackupError('长期计划包含重复或超出总量的节次')
+      usedUnits.add(key)
+    }
   }
   return tasks
 }
@@ -229,6 +273,10 @@ function tasksEqual(left: Task, right: Task) {
     && JSON.stringify(left.tags) === JSON.stringify(right.tags)
     && left.deletedAt === right.deletedAt
     && JSON.stringify(left.calendarImport) === JSON.stringify(right.calendarImport)
+    && JSON.stringify(left.seriesId) === JSON.stringify(right.seriesId)
+    && JSON.stringify(left.recurrence) === JSON.stringify(right.recurrence)
+    && JSON.stringify(left.planDefinition) === JSON.stringify(right.planDefinition)
+    && JSON.stringify(left.planAllocation) === JSON.stringify(right.planAllocation)
 }
 
 function nextUniqueId(usedIds: Set<string>) {
@@ -241,12 +289,34 @@ function nextUniqueId(usedIds: Set<string>) {
 
 export function planImport(currentTasks: Task[], backup: WorkGridBackup): ImportPlan {
   const currentById = new Map(currentTasks.map((task) => [task.id, task]))
-  const usedIds = new Set(currentById.keys())
+  const usedIds = new Set([...currentById.keys(), ...backup.tasks.map((task) => task.id)])
   const additions: Task[] = []
   let duplicates = 0
   let conflicts = 0
 
+  // Copy conflicting plan graphs together, never attach imported lessons to a local version.
+  const remappedPlans = new Map<string, string>()
+  for (const plan of backup.tasks.filter((task) => task.planDefinition)) {
+    const incomingGroup = backup.tasks.filter((task) => task.id === plan.id || task.planAllocation?.planId === plan.id)
+    const currentGroup = currentTasks.filter((task) => task.id === plan.id || task.planAllocation?.planId === plan.id)
+    const intersects = incomingGroup.some((task) => currentById.has(task.id))
+    if (intersects && (incomingGroup.length !== currentGroup.length || incomingGroup.some((task) => !currentById.has(task.id) || !tasksEqual(currentById.get(task.id)!, task)))) {
+      const newId = nextUniqueId(usedIds)
+      usedIds.add(newId)
+      remappedPlans.set(plan.id, newId)
+    }
+  }
+
   for (const imported of backup.tasks) {
+    const graphId = imported.planDefinition ? imported.id : imported.planAllocation?.planId
+    const copiedPlanId = graphId ? remappedPlans.get(graphId) : undefined
+    if (copiedPlanId) {
+      const id = imported.planDefinition ? copiedPlanId : nextUniqueId(usedIds)
+      usedIds.add(id)
+      additions.push({ ...imported, id, ...(imported.planAllocation ? { planAllocation: { ...imported.planAllocation, planId: copiedPlanId } } : {}) })
+      conflicts += 1
+      continue
+    }
     const existing = currentById.get(imported.id)
     if (!existing) {
       additions.push(imported)

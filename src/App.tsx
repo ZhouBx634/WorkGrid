@@ -9,11 +9,14 @@ import CloudSync from './components/CloudSync'
 import InstallApp from './components/InstallApp'
 import CourseImport from './components/CourseImport'
 import CalendarZoom from './components/CalendarZoom'
+import LongTermPlans, { DeadlineStrip } from './components/LongTermPlans'
+import TimeFields from './components/TimeFields'
+import { duePlanReminders } from './plans'
 import { DEFAULT_SLOT_HEIGHT, ZOOM_STORAGE_KEY, fitSlotHeight, focusedTimeRange, loadCalendarZoom, stepCalendarZoom, timeRangeLabel, type CalendarZoom as Zoom, type TimeRange } from './calendarZoom'
 import { applyCourseImport, undoCourseImport, type CourseOccurrence } from './courseImport'
 import { clearCourseRecovery, loadCourseRecovery, saveCourseRecovery } from './courseRecovery'
 import { dueEndReminderTasks, dueReminderTasks, reminderLabel } from './reminders'
-import { dropDateFromPosition, parseDurationInput } from './scheduling'
+import { dropDateFromPosition, durationFromTimes, endFromDuration, parseDurationInput } from './scheduling'
 import { recurrenceDates, recurrenceLabel } from './recurrence'
 import { clearImportRecovery, loadImportRecovery, loadTasks, makeId, saveImportRecovery, saveTasks } from './storage'
 import type { RecurrenceFrequency, RecurrenceRule, Task, TaskColor, TaskDraft, TaskStatus, ViewMode } from './types'
@@ -175,12 +178,19 @@ function App() {
   const [draft, setDraft] = useState<TaskDraft>(EMPTY_DRAFT)
   const [draftDuration, setDraftDuration] = useState('60')
   const [draftTags, setDraftTags] = useState('')
+  const [draftStart, setDraftStart] = useState('')
+  const [draftEnd, setDraftEnd] = useState('')
+  const [draftTimeMode, setDraftTimeMode] = useState<'duration' | 'end'>('end')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState<TaskDraft>(EMPTY_DRAFT)
   const [editingDuration, setEditingDuration] = useState('60')
   const [editingStart, setEditingStart] = useState('')
+  const [editingEnd, setEditingEnd] = useState('')
+  const [editingTimeMode, setEditingTimeMode] = useState<'duration' | 'end'>('end')
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
+  const [now, setNow] = useState(new Date())
   const [editingStatus, setEditingStatus] = useState<TaskStatus>('todo')
   const [editingReminder, setEditingReminder] = useState<number | null>(null)
   const [editingEndReminder, setEditingEndReminder] = useState(false)
@@ -220,6 +230,7 @@ function App() {
 
   useEffect(() => saveTasks(tasks), [tasks])
   useEffect(() => { tasksRef.current = tasks }, [tasks])
+  useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer) }, [])
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => { setToast(null); setUndoEntry(null) }, undoEntry ? 6000 : 2400)
@@ -257,19 +268,26 @@ function App() {
         deliveredReminderKeys.current.add(key)
         return true
       })
-      if (dueStarts.length === 0 && dueEnds.length === 0) return
+      const duePlans = duePlanReminders(tasks).filter((task) => {
+        const key = `plan:${task.id}:${task.planDefinition!.deadline}:${task.planDefinition!.reminderMinutes}`
+        if (deliveredReminderKeys.current.has(key)) return false
+        deliveredReminderKeys.current.add(key)
+        return true
+      })
+      if (dueStarts.length === 0 && dueEnds.length === 0 && duePlans.length === 0) return
       setUndoEntry(null)
       const deliveredAt = new Date().toISOString()
-      const startIds = new Set(dueStarts.map((task) => task.id))
+      const startIds = new Set([...dueStarts, ...duePlans].map((task) => task.id))
       const endIds = new Set(dueEnds.map((task) => task.id))
       setTasks((current) => current.map((task) => ({
         ...task,
         remindedAt: startIds.has(task.id) ? deliveredAt : task.remindedAt,
         endRemindedAt: endIds.has(task.id) ? deliveredAt : task.endRemindedAt,
       })))
-      if (dueEnds.length === 1 && dueStarts.length === 0) setToast(`结束提醒：${dueEnds[0].title}`)
+      if (duePlans.length === 1 && dueStarts.length === 0 && dueEnds.length === 0) setToast(`截止提醒：${duePlans[0].title}`)
+      else if (dueEnds.length === 1 && dueStarts.length === 0) setToast(`结束提醒：${dueEnds[0].title}`)
       else if (dueStarts.length === 1 && dueEnds.length === 0) setToast(`开始提醒：${dueStarts[0].title}`)
-      else setToast(`有 ${dueStarts.length + dueEnds.length} 项工作提醒`)
+      else setToast(`有 ${dueStarts.length + dueEnds.length + duePlans.length} 项工作提醒`)
       if ('Notification' in window && Notification.permission === 'granted') {
         dueStarts.forEach((task) => {
           try { new Notification('WorkGrid 开始提醒', { body: `${task.title} · ${task.start ? format(new Date(task.start), 'HH:mm') : ''}`, tag: `workgrid-start-${task.id}` }) } catch { /* 应用内提醒已经显示 */ }
@@ -277,6 +295,7 @@ function App() {
         dueEnds.forEach((task) => {
           try { new Notification('WorkGrid 结束提醒', { body: `${task.title} 的预计时间已结束`, tag: `workgrid-end-${task.id}` }) } catch { /* 应用内提醒已经显示 */ }
         })
+        duePlans.forEach((task) => { try { new Notification('WorkGrid 截止提醒', { body: `${task.title} · ${toDateTimeLocal(task.planDefinition!.deadline).replace('T', ' ')}`, tag: `workgrid-plan-${task.id}` }) } catch { /* In-app reminder is already visible. */ } })
       }
     }
     checkReminders()
@@ -284,7 +303,7 @@ function App() {
     return () => window.clearInterval(timer)
   }, [tasks])
 
-  const activeTasks = useMemo(() => tasks.filter((task) => !task.deletedAt), [tasks])
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.deletedAt && !task.planDefinition), [tasks])
   const trashedTasks = useMemo(() => tasks.filter((task) => task.deletedAt).sort((left, right) => Date.parse(right.deletedAt!) - Date.parse(left.deletedAt!)), [tasks])
   const filteredTasks = useMemo(() => activeTasks.filter((task) => {
     const query = searchQuery.trim().toLocaleLowerCase()
@@ -292,7 +311,7 @@ function App() {
       && (statusFilter === 'all' || task.status === statusFilter)
       && (tagFilter === 'all' || task.tags.includes(tagFilter))
   }), [activeTasks, searchQuery, statusFilter, tagFilter])
-  const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.start), [filteredTasks])
+  const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.start && !task.planAllocation), [filteredTasks])
   const visibleTasks = useMemo(() => filteredTasks.filter((task) => taskIsVisible(task, anchor, view)), [filteredTasks, anchor, view])
   const allTags = useMemo(() => [...new Set(activeTasks.flatMap((task) => task.tags))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [activeTasks])
   const selectedTask = activeTasks.find((task) => task.id === selectedTaskId) ?? null
@@ -401,10 +420,10 @@ function App() {
   }
   function createTask(event: React.FormEvent) {
     event.preventDefault(); const title = draft.title.trim(); if (!title) return
-    const duration = parseDurationInput(draftDuration)
-    if (duration === null) { notify('预计时长应为 1 至 720 的整数分钟'); return }
-    commitTaskChange('创建工作', '已创建工作方块', (current) => [{ id: makeId(), title, color: draft.color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags), deletedAt: null }, ...current])
-    setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags('')
+    const duration = draftTimeMode === 'end' && draftStart ? durationFromTimes(draftStart, draftEnd) : parseDurationInput(draftDuration)
+    if (duration === null) { notify('请填写有效时间：结束须晚于开始，时长为 1 至 720 分钟'); return }
+    commitTaskChange('创建工作', draftStart ? '已创建并安排到日历' : '已创建工作方块', (current) => [{ id: makeId(), title, color: draft.color, duration, start: fromDateTimeLocal(draftStart), createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags), deletedAt: null }, ...current])
+    setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags(''); setDraftStart(''); setDraftEnd('')
   }
   function scheduleTask(taskId: string, slot: Date, reopenCompleted?: boolean) {
     const normalized = normalizeDropDate(slot, view)
@@ -469,17 +488,19 @@ function App() {
   function beginEdit(task: Task) {
     setEditingTaskId(task.id); setEditingDraft({ title: task.title, color: task.color, duration: task.duration, tags: task.tags }); setEditingTags(task.tags.join(', ')); setEditingDuration(String(task.duration))
     setEditingStart(toDateTimeLocal(task.start)); setEditingStatus(task.status); setEditingReminder(task.reminderMinutes); setEditingEndReminder(task.endReminder)
+    setEditingEnd(endFromDuration(toDateTimeLocal(task.start), String(task.duration))); setEditingTimeMode('end')
     setEditingFrequency(task.recurrence?.frequency ?? 'none'); setEditingUntil(task.recurrence?.until?.slice(0, 10) ?? ''); setEditingWeekdays(task.recurrence?.weekdays ?? []); setEditingScope(task.seriesId ? 'series' : 'single')
   }
   async function saveEdit(event: React.FormEvent) {
     event.preventDefault(); if (!editingTaskId || !editingDraft.title.trim()) return
-    const duration = parseDurationInput(editingDuration)
-    if (duration === null) { notify('预计时长应为 1 至 720 的整数分钟'); return }
+    const duration = editingTimeMode === 'end' && editingStart ? durationFromTimes(editingStart, editingEnd) : parseDurationInput(editingDuration)
+    if (duration === null) { notify('请填写有效时间：结束须晚于开始，时长为 1 至 720 分钟'); return }
     if ((editingReminder !== null || editingEndReminder) && editingStart && 'Notification' in window && Notification.permission === 'default') {
       try { await Notification.requestPermission() } catch { /* 应用内提醒仍然可用 */ }
     }
     const message = (editingReminder !== null || editingEndReminder) && editingStart && (!('Notification' in window) || Notification.permission !== 'granted') ? '修改已保存，将使用应用内提醒' : '修改已保存'
-    const rule: RecurrenceRule | null = editingFrequency === 'none' || !editingStart ? null : { frequency: editingFrequency, until: editingUntil || editingStart.slice(0, 10), ...(editingFrequency === 'weekly' ? { weekdays: editingWeekdays.length ? editingWeekdays : [new Date(editingStart).getDay()] } : {}) }
+    const linkedPlan = tasksRef.current.find((task) => task.id === editingTaskId)?.planAllocation
+    const rule: RecurrenceRule | null = linkedPlan || editingFrequency === 'none' || !editingStart ? null : { frequency: editingFrequency, until: editingUntil || editingStart.slice(0, 10), ...(editingFrequency === 'weekly' ? { weekdays: editingWeekdays.length ? editingWeekdays : [new Date(editingStart).getDay()] } : {}) }
     commitTaskChange(rule ? '设置重复日程' : '编辑工作', rule ? `已设置重复：${recurrenceLabel(rule)}` : message, (current) => {
       const source = current.find((task) => task.id === editingTaskId)
       if (!source) return current
@@ -506,7 +527,8 @@ function App() {
   function deleteEditingTask() {
     if (!editingTaskId) return
     const deletedAt = new Date().toISOString()
-    commitTaskChange('删除工作', '已移入回收站', (current) => current.map((task) => task.id === editingTaskId ? { ...task, deletedAt } : task))
+    const linked = tasksRef.current.find((task) => task.id === editingTaskId)?.planAllocation
+    commitTaskChange(linked ? '移回计划' : '删除工作', linked ? '该节已归还计划的待安排区，可重新拖入日历' : '已移入回收站', (current) => current.map((task) => task.id === editingTaskId ? linked ? { ...task, start: null, deletedAt: null, status: 'todo', completedAt: null, remindedAt: null, endRemindedAt: null } : { ...task, deletedAt } : task))
     setSelectedTaskId((current) => current === editingTaskId ? null : current); setEditingTaskId(null)
   }
   function importTasks(nextTasks: Task[], message: string) {
@@ -604,7 +626,7 @@ function App() {
     if (batchSelection.size === 0 || !window.confirm(`将选中的 ${batchSelection.size} 项工作移入回收站吗？`)) return
     const count = batchSelection.size
     const deletedAt = new Date().toISOString()
-    commitTaskChange('批量删除', `已将 ${count} 项工作移入回收站`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, deletedAt } : task))
+    commitTaskChange('批量删除', `已处理 ${count} 项工作，计划日程归还待安排，其余移入回收站`, (current) => current.map((task) => batchSelection.has(task.id) ? task.planAllocation ? { ...task, start: null, deletedAt: null, status: 'todo', completedAt: null, remindedAt: null, endRemindedAt: null } : { ...task, deletedAt } : task))
     setBatchSelection(new Set())
   }
   function restoreTask(taskId: string) {
@@ -658,10 +680,13 @@ function App() {
     return <><CalendarZoom zoom={zoom} rangeLabel={timeRangeLabel(timeRange)} empty={focusedTasks.length === 0} disabled={draggingTaskId !== null || resizePreview !== null} onStep={(direction) => changeZoom(stepCalendarZoom(zoom, slotHeight, direction))} onChange={changeZoom} onToggleFocus={toggleFocus} />{body}</>
   }
 
+  function renderPlanTask(task: Task) {
+    return <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />
+  }
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
   return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
-      {editingTaskId && <div className="recurrence-panel" aria-label="重复日程设置"><label htmlFor="edit-frequency">重复</label><select id="edit-frequency" value={editingFrequency} disabled={!editingStart} onChange={(event) => setEditingFrequency(event.target.value as RecurrenceFrequency | 'none')}><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select>{editingFrequency !== 'none' && <><label htmlFor="edit-until">重复到</label><input id="edit-until" type="date" min={editingStart.slice(0, 10)} value={editingUntil || editingStart.slice(0, 10)} onChange={(event) => setEditingUntil(event.target.value)} />{editingFrequency === 'weekly' && <div className="weekday-picker" aria-label="重复星期">{['日','一','二','三','四','五','六'].map((label, day) => <button key={day} type="button" className={editingWeekdays.includes(day) ? 'is-active' : ''} onClick={() => setEditingWeekdays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day])}>周{label}</button>)}</div>}{tasks.find((task) => task.id === editingTaskId)?.seriesId && <div className="scope-picker"><button type="button" className={editingScope === 'single' ? 'is-active' : ''} onClick={() => setEditingScope('single')}>仅本次</button><button type="button" className={editingScope === 'series' ? 'is-active' : ''} onClick={() => setEditingScope('series')}>整个系列</button></div>}</>}</div>}
+      {editingTaskId && <div className="recurrence-panel" aria-label="重复日程设置"><label htmlFor="edit-frequency">重复</label><select id="edit-frequency" value={editingFrequency} disabled={!editingStart || !!tasks.find((task) => task.id === editingTaskId)?.planAllocation} onChange={(event) => setEditingFrequency(event.target.value as RecurrenceFrequency | 'none')}><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select>{editingFrequency !== 'none' && <><label htmlFor="edit-until">重复到</label><input id="edit-until" type="date" min={editingStart.slice(0, 10)} value={editingUntil || editingStart.slice(0, 10)} onChange={(event) => setEditingUntil(event.target.value)} />{editingFrequency === 'weekly' && <div className="weekday-picker" aria-label="重复星期">{['日','一','二','三','四','五','六'].map((label, day) => <button key={day} type="button" className={editingWeekdays.includes(day) ? 'is-active' : ''} onClick={() => setEditingWeekdays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day])}>周{label}</button>)}</div>}{tasks.find((task) => task.id === editingTaskId)?.seriesId && <div className="scope-picker"><button type="button" className={editingScope === 'single' ? 'is-active' : ''} onClick={() => setEditingScope('single')}>仅本次</button><button type="button" className={editingScope === 'series' ? 'is-active' : ''} onClick={() => setEditingScope('series')}>整个系列</button></div>}</>}</div>}
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><CalendarDays size={18} /></span><span>WorkGrid</span></div>
         <div className="view-switcher" role="group" aria-label="日历视图">{(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => <button key={mode} type="button" className={view === mode ? 'is-active' : ''} onClick={() => selectView(mode)}>{VIEW_LABELS[mode]}</button>)}</div>
@@ -673,18 +698,19 @@ function App() {
         </div>
       </header>
       {courseImportOpen && <CourseImport tasks={tasks} canUndo={canUndoCourseImport} onApply={importCourses} onUndo={undoLastCourseImport} onClose={() => setCourseImportOpen(false)} />}
+      <DeadlineStrip tasks={tasks} now={now} onOpen={(plan) => setEditingPlanId(plan.id)} />
       <div className="workspace">
         <DroppableBacklog>
           <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
           <form className="task-form" onSubmit={createTask}>
             <label className="sr-only" htmlFor="task-title">工作内容</label>
             <div className="input-row"><input id="task-title" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} /><button className="primary-icon-button" type="submit" aria-label="创建工作方块" title="创建工作方块"><Plus size={18} /></button></div>
-            <label className="field-label" htmlFor="task-duration">预计时长（分钟）</label>
-            <input className="duration-input" id="task-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={draftDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setDraftDuration(event.target.value)} />
+            <TimeFields prefix="task" start={draftStart} duration={draftDuration} end={draftEnd} mode={draftTimeMode} onStart={setDraftStart} onDuration={setDraftDuration} onEnd={setDraftEnd} onMode={setDraftTimeMode} />
             <label className="field-label" htmlFor="task-tags">标签（逗号分隔）</label>
             <input id="task-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} />
             <div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div>
           </form>
+          <LongTermPlans tasks={tasks} commit={commitTaskChange} notify={notify} renderTask={renderPlanTask} editingPlan={tasks.find((task) => task.id === editingPlanId && task.planDefinition) ?? null} onEditPlan={(plan) => setEditingPlanId(plan?.id ?? null)} now={now} />
           <div className="filter-bar">
             <div className="search-field"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作" placeholder="搜索工作或标签" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></div>
             <div className="filter-selects"><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="按标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">全部标签</option>{allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></div>
@@ -693,7 +719,7 @@ function App() {
         </DroppableBacklog>
         <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}<button className={`secondary-button batch-toggle${batchMode ? ' is-active' : ''}`} type="button" onClick={toggleBatchMode}><ListChecks size={15} />{batchMode ? '退出批量' : '批量管理'}</button></div></div>{batchMode && <div className="batch-toolbar"><strong>已选择 {batchSelection.size} 项</strong><div className="batch-actions"><select aria-label="批量修改状态" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStatus(event.target.value as TaskStatus); event.currentTarget.value = '' }}><option value="" disabled>修改状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="批量修改颜色" defaultValue="" onChange={(event) => { if (event.target.value) batchSetColor(event.target.value as TaskColor); event.currentTarget.value = '' }}><option value="" disabled>修改颜色</option>{COLORS.map((color) => <option value={color.value} key={color.value}>{color.label}</option>)}</select><select aria-label="批量设置开始提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStartReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>开始提醒</option>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><select aria-label="批量设置结束提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetEndReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>结束提醒</option><option value="on">开启</option><option value="off">关闭</option></select><input aria-label="批量添加标签" placeholder="添加标签" value={batchTags} onChange={(event) => setBatchTags(event.target.value)} /><button className="secondary-button" type="button" disabled={batchSelection.size === 0 || parseTags(batchTags).length === 0} onClick={batchSetTags}>添加标签</button><button className="danger-button batch-delete" type="button" disabled={batchSelection.size === 0} onClick={batchDelete}><Trash2 size={15} />删除</button></div></div>}{calendarBody()}</main>
       </div>
-      {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><label htmlFor="edit-start">开始时间</label><input id="edit-start" type="datetime-local" step="900" value={editingStart} onChange={(event) => setEditingStart(event.target.value)} /><label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><label htmlFor="edit-duration">预计时长（分钟）</label><input id="edit-duration" type="number" inputMode="numeric" min="1" max="720" step="1" required value={editingDuration} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditingDuration(event.target.value)} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
+      {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><TimeFields prefix="edit" start={editingStart} duration={editingDuration} end={editingEnd} mode={editingTimeMode} onStart={setEditingStart} onDuration={setEditingDuration} onEnd={setEditingEnd} onMode={setEditingTimeMode} />{tasks.find((task) => task.id === editingTaskId)?.planAllocation && <button type="button" className="plan-link" onClick={() => { const planId = tasks.find((task) => task.id === editingTaskId)?.planAllocation?.planId; setEditingTaskId(null); if (planId) setEditingPlanId(planId) }}>查看所属长期计划</button>}<label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
       {trashOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTrashOpen(false)}><section className="edit-dialog trash-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><div><h2 id="trash-title">回收站</h2><p>{trashedTasks.length} 项工作</p></div><button className="icon-button" type="button" aria-label="关闭回收站" title="关闭" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashedTasks.length === 0 ? <div className="trash-empty"><Trash2 size={22} /><span>回收站为空</span></div> : <><div className="trash-list">{trashedTasks.map((task) => <div className="trash-item" key={task.id}><div><strong>{task.title}</strong><small>{format(new Date(task.deletedAt!), 'yyyy-MM-dd HH:mm')} 删除</small></div><button className="secondary-button" type="button" onClick={() => restoreTask(task.id)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" aria-label={`永久删除 ${task.title}`} title="永久删除" onClick={() => permanentlyDeleteTask(task.id)}><Trash2 size={15} /></button></div>)}</div><div className="dialog-actions trash-actions"><button className="danger-primary-button" type="button" onClick={emptyTrash}><Trash2 size={15} />清空回收站</button></div></>}</section></div>}
       {pendingSchedule && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingSchedule(null)}><section className="edit-dialog reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="reschedule-title">重新安排已完成任务</h2><button className="icon-button" type="button" aria-label="关闭" onClick={() => setPendingSchedule(null)}><X size={18} /></button></div><p>这个任务已经完成。移动到新时间后，是否将它重新打开为待办？</p><div className="dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingSchedule(null)}>取消</button><button className="secondary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, false); setPendingSchedule(null) }}>保持完成</button><button className="primary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, true); setPendingSchedule(null) }}>重新打开并移动</button></div></section></div>}
       {toast && <div className="toast" role="status"><span>{toast}</span>{undoEntry && <button type="button" onClick={undoLastChange}>撤销</button>}</div>}
