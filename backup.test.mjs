@@ -23,7 +23,7 @@ assert.deepEqual(parsed.tasks[0], { ...task, status: 'todo', completedAt: null, 
 
 const versionOneBackup = { ...backup, schemaVersion: 1 }
 const migrated = parseBackupText(JSON.stringify(versionOneBackup))
-assert.equal(migrated.schemaVersion, 7)
+assert.equal(migrated.schemaVersion, 8)
 assert.equal(migrated.tasks[0].status, 'todo')
 assert.equal(migrated.tasks[0].completedAt, null)
 assert.equal(migrated.tasks[0].reminderMinutes, null)
