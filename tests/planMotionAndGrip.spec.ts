@@ -177,8 +177,11 @@ test('short events split into equal hit areas at every scale, including overlapp
   await expect(page.locator('.duration-timeline')).toHaveAttribute('aria-busy', 'false')
   expect((await short.boundingBox())!.height).toBeGreaterThanOrEqual(42)
   await expect(short.locator('.resize-handle')).toHaveCount(1)
-  await page.getByRole('button', { name: '批量管理' }).click()
-  await expect(page.locator('.event-move-handle, .resize-handle')).toHaveCount(0)
+  await short.getByRole('checkbox').check()
+  await expect(short.getByRole('checkbox')).toBeChecked()
+  await expect(short.locator('.event-move-handle')).toHaveCount(1)
+  await expect(short.locator('.resize-handle')).toHaveCount(1)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
 test('real mouse resizing changes only duration, keeps capture when shrinking, and allows editing afterwards', async ({ page }, testInfo) => {

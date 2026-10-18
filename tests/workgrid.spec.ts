@@ -148,9 +148,9 @@ test('tasks can be searched, filtered, edited, and batch tagged', async ({ page 
   await editDialog.getByRole('button', { name: '保存', exact: true }).click()
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').find((item: { id: string }) => item.id === 'client-task')?.tags, STORAGE_KEY)).toEqual(['客户', '重要'])
 
-  await page.getByRole('button', { name: '批量管理' }).click()
-  await page.locator('.task-card', { hasText: '客户方案' }).click()
-  await page.locator('.task-card', { hasText: '内部复盘' }).click()
+  await page.getByRole('checkbox', { name: '选择日程 客户方案', exact: true }).check()
+  await page.getByRole('checkbox', { name: '选择日程 内部复盘', exact: true }).check()
+  await page.getByText('更多操作', { exact: true }).click()
   await page.getByLabel('批量添加标签').fill('本周')
   await page.getByRole('button', { name: '添加标签', exact: true }).click()
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').every((item: { tags: string[] }) => item.tags.includes('本周')), STORAGE_KEY)).toBe(true)
@@ -199,8 +199,8 @@ test('edit, scheduling, and batch changes can be undone', async ({ page }, testI
   await page.getByRole('button', { name: '撤销', exact: true }).click()
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.start, STORAGE_KEY)).toBeNull()
 
-  await page.getByRole('button', { name: '批量管理' }).click()
-  await page.locator('.task-card', { hasText: '可撤销任务' }).click()
+  await page.getByRole('checkbox', { name: '选择日程 可撤销任务', exact: true }).check()
+  await page.getByText('更多操作', { exact: true }).click()
   await page.getByLabel('批量修改颜色').selectOption('green')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
   await page.getByRole('button', { name: '撤销', exact: true }).click()
@@ -232,11 +232,10 @@ test('trash supports undo, restore, permanent delete, and emptying', async ({ pa
   await expect(trashDialog.getByText('回收站为空')).toBeVisible()
   await trashDialog.getByRole('button', { name: '关闭回收站' }).click()
 
-  await page.getByRole('button', { name: '批量管理' }).click()
-  await page.locator('.task-card', { hasText: '第一项' }).click()
-  await page.locator('.task-card', { hasText: '第二项' }).click()
+  await page.getByRole('checkbox', { name: '选择日程 第一项', exact: true }).check()
+  await page.getByRole('checkbox', { name: '选择日程 第二项', exact: true }).check()
   page.once('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: '删除', exact: true }).click()
+  await page.getByRole('button', { name: '一键删除', exact: true }).click()
   await page.getByRole('button', { name: /回收站，2 项/ }).click()
   await expect(trashDialog.locator('.trash-item')).toHaveCount(2)
 
@@ -426,7 +425,7 @@ test('views, batch controls, reminders, and legacy data migration still work', a
   }
   await page.getByRole('button', { name: '周', exact: true }).click()
   await page.locator('.calendar-event', { hasText: '回归测试任务' }).click()
-  await page.getByLabel('开始提醒').selectOption('5')
+  await page.getByLabel('开始提醒', { exact: true }).selectOption('5')
   await expect(page.getByLabel('结束时提醒')).toBeChecked()
   await page.getByRole('button', { name: '保存', exact: true }).click()
 
@@ -435,9 +434,9 @@ test('views, batch controls, reminders, and legacy data migration still work', a
     return [saved?.reminderMinutes, saved?.endReminder]
   }, STORAGE_KEY)).toEqual([5, true])
 
-  await page.getByRole('button', { name: '批量管理' }).click()
-  await page.locator('.calendar-event', { hasText: '回归测试任务' }).click()
+  await page.getByRole('checkbox', { name: '选择日程 回归测试任务', exact: true }).check()
   await expect(page.getByText('已选择 1 项')).toBeVisible()
+  await page.getByText('更多操作', { exact: true }).click()
   await page.getByLabel('批量修改颜色').selectOption('green')
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.color, STORAGE_KEY)).toBe('green')
 })

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
-import { ArrowUpDown, Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, ListChecks, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpDown, Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { addMinutes, format, isBefore, isSameDay, startOfDay } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { monthDays, monthLabel, moveAnchor, normalizeDropDate, taskIsVisible, taskStartsIn, viewTitle, weekDays } from './calendar'
@@ -11,6 +11,10 @@ import CourseImport from './components/CourseImport'
 import CalendarZoom from './components/CalendarZoom'
 import LongTermPlans, { DeadlineStrip } from './components/LongTermPlans'
 import TimeFields from './components/TimeFields'
+import BatchToolbar from './components/BatchToolbar'
+import BatchDeleteDialog, { type BatchDeleteReview } from './components/BatchDeleteDialog'
+import SelectionCheckbox from './components/SelectionCheckbox'
+import { batchDeleteSummary, deleteSelectedTasks } from './batchDelete'
 import { duePlanReminders } from './plans'
 import { DEFAULT_SLOT_HEIGHT, ZOOM_STORAGE_KEY, fitSlotHeight, focusedTimeRange, loadCalendarZoom, stepCalendarZoom, timeRangeLabel, type CalendarZoom as Zoom, type TimeRange } from './calendarZoom'
 import { applyCourseImport, undoCourseImport, type CourseOccurrence } from './courseImport'
@@ -58,24 +62,20 @@ function fromDateTimeLocal(value: string) {
   return date.toISOString()
 }
 
-function SelectionMark({ selected }: { selected: boolean }) {
-  return <span className={`batch-checkbox${selected ? ' is-checked' : ''}`} aria-hidden="true">{selected && <Check size={12} />}</span>
-}
-
 function DroppableBacklog({ children }: { children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'backlog', data: { type: 'backlog' } })
   return <aside ref={setNodeRef} className={`task-panel${isOver ? ' is-over' : ''}`}>{children}</aside>
 }
 
-function TaskCard({ task, selected, batchMode, batchSelected, onSelect, onEdit }: {
-  task: Task; selected: boolean; batchMode: boolean; batchSelected: boolean; onSelect: () => void; onEdit: () => void
+function TaskCard({ task, selected, batchSelected, onSelect, onToggleBatch, onEdit }: {
+  task: Task; selected: boolean; batchSelected: boolean; onSelect: () => void; onToggleBatch: () => void; onEdit: () => void
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
   return (
-    <article ref={setNodeRef} className={`task-card color-${task.color}${selected ? ' is-selected' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} onClick={onSelect} aria-label={`${task.title}，${durationLabel(task.duration)}`} {...attributes} {...(!batchMode ? listeners : {})}>
-      {batchMode ? <SelectionMark selected={batchSelected} /> : <span className="drag-handle" title="拖动方块"><GripVertical size={15} aria-hidden="true" /></span>}
+    <article ref={setNodeRef} className={`task-card color-${task.color}${selected ? ' is-selected' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} onClick={onSelect} aria-label={`${task.title}，${durationLabel(task.duration)}`} {...attributes} {...listeners}>
+      <SelectionCheckbox selected={batchSelected} label={`选择日程 ${task.title}`} onToggle={onToggleBatch} /><span className="drag-handle" title="拖动方块"><GripVertical size={15} aria-hidden="true" /></span>
       <div className="task-copy"><strong>{task.title}</strong><span><Clock3 size={13} />{durationLabel(task.duration)}</span>{task.tags.length > 0 && <div className="task-tags">{task.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}</div>
-      {!batchMode && <button className="icon-button task-edit" type="button" aria-label={`编辑 ${task.title}`} title="编辑任务" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onEdit() }}><Pencil size={15} /></button>}
+      <button className="icon-button task-edit" type="button" aria-label={`编辑 ${task.title}`} title="编辑任务" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onEdit() }}><Pencil size={15} /></button>
     </article>
   )
 }
@@ -132,8 +132,8 @@ function DroppableDayTrack({ day, guide, children }: { day: Date; guide: DragGui
   return <div ref={setNodeRef} className={`day-track${isOver ? ' is-over' : ''}`} data-day={day.toISOString()}>{children}{visibleGuide && <div className="drag-time-guide" style={{ top: visibleGuide.top }} data-time={guideTime} aria-hidden="true"><span>{guideTime}</span></div>}</div>
 }
 
-function CalendarEvent({ item, duration, isResizing, batchMode, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
-  item: LaidOutTask; duration: number; isResizing: boolean; batchMode: boolean; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void; onStatus: (status: TaskStatus) => void; onResize: (event: React.PointerEvent) => void
+function CalendarEvent({ item, duration, isResizing, batchSelected, onOpen, onToggleBatch, onStatus, onResize }: {
+  item: LaidOutTask; duration: number; isResizing: boolean; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void; onStatus: (status: TaskStatus) => void; onResize: (event: React.PointerEvent) => void
 }) {
   const { task } = item
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
@@ -143,12 +143,12 @@ function CalendarEvent({ item, duration, isResizing, batchMode, batchSelected, o
   const end = addMinutes(start, duration)
   const style = { top: item.top, height: item.height, left: `calc(${(item.lane / item.laneCount) * 100}% + 3px)`, width: `calc(${100 / item.laneCount}% - 6px)` }
   return (
-    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${splitHandles ? ' is-split-handles' : ''}${batchMode ? ' is-batch-mode' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>
-      {batchMode && <SelectionMark selected={batchSelected} />}
-      {!batchMode && <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title={splitHandles ? '左半边拖动移动，点击编辑' : '按住拖动移动日程'} onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (splitHandles && !isDragging) onOpen() }}><GripVertical size={14} aria-hidden="true" /></button>}
+    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${splitHandles ? ' is-split-handles' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); onOpen() }} {...attributes} {...listeners}>
+      <SelectionCheckbox selected={batchSelected} label={`选择日程 ${task.title}`} onToggle={onToggleBatch} />
+      <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title={splitHandles ? '左半边拖动移动，点击编辑' : '按住拖动移动日程'} onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (splitHandles && !isDragging) onOpen() }}><GripVertical size={14} aria-hidden="true" /></button>
       <div className="event-main"><strong>{task.title}</strong><span>{format(start, 'HH:mm')} - {format(end, 'HH:mm')}</span>{task.calendarImport && <small className="course-event-details" title={[task.calendarImport.location, task.calendarImport.teacher, task.calendarImport.teachingClass].filter(Boolean).join(' · ')}>{[task.calendarImport.location, task.calendarImport.teacher].filter(Boolean).join(' · ')}</small>}</div>
-      {!batchMode && <div className="event-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{task.status === 'completed' ? <button type="button" aria-label="重新打开" title="重新打开" onClick={() => onStatus('todo')}><RotateCcw size={13} /></button> : <><button type="button" aria-label={task.status === 'in-progress' ? '暂停' : '开始'} title={task.status === 'in-progress' ? '暂停' : '开始'} onClick={() => onStatus(task.status === 'in-progress' ? 'todo' : 'in-progress')}>{task.status === 'in-progress' ? <Pause size={13} /> : <Play size={13} />}</button><button type="button" aria-label="完成" title="完成" onClick={() => onStatus('completed')}><Check size={14} /></button></>}</div>}
-      {!batchMode && <button className="resize-handle" type="button" aria-label="调整时长" title={splitHandles ? '右半边上下拖动调整时长' : '上下拖动调整时长'} onPointerDown={(event) => { resizeStartedCompact.current = item.height < 42; onResize(event) }} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation() }}><ArrowUpDown size={13} aria-hidden="true" /></button>}
+      <div className="event-actions" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{task.status === 'completed' ? <button type="button" aria-label="重新打开" title="重新打开" onClick={() => onStatus('todo')}><RotateCcw size={13} /></button> : <><button type="button" aria-label={task.status === 'in-progress' ? '暂停' : '开始'} title={task.status === 'in-progress' ? '暂停' : '开始'} onClick={() => onStatus(task.status === 'in-progress' ? 'todo' : 'in-progress')}>{task.status === 'in-progress' ? <Pause size={13} /> : <Play size={13} />}</button><button type="button" aria-label="完成" title="完成" onClick={() => onStatus('completed')}><Check size={14} /></button></>}</div>
+      <button className="resize-handle" type="button" aria-label="调整时长" title={splitHandles ? '右半边上下拖动调整时长' : '上下拖动调整时长'} onPointerDown={(event) => { resizeStartedCompact.current = item.height < 42; onResize(event) }} onMouseDown={(event) => event.stopPropagation()} onTouchStart={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation() }}><ArrowUpDown size={13} aria-hidden="true" /></button>
     </article>
   )
 }
@@ -158,9 +158,9 @@ function MonthCell({ day, className, children, onSchedule }: { day: Date; classN
   return <div ref={setNodeRef} className={`${className}${isOver ? ' is-over' : ''}`} onClick={onSchedule} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onSchedule() }}>{children}</div>
 }
 
-function MonthEvent({ task, batchMode, batchSelected, onOpen, onToggleBatch }: { task: Task; batchMode: boolean; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void }) {
+function MonthEvent({ task, batchSelected, onOpen, onToggleBatch }: { task: Task; batchSelected: boolean; onOpen: () => void; onToggleBatch: () => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
-  return <button ref={setNodeRef} type="button" className={`month-event color-${task.color} status-${task.status}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} onClick={(event) => { event.stopPropagation(); batchMode ? onToggleBatch() : onOpen() }} {...attributes} {...(!batchMode ? listeners : {})}>{batchMode && <SelectionMark selected={batchSelected} />}<span>{task.status === 'completed' && <Check size={11} />}{task.title}</span><small>{format(new Date(task.start!), 'HH:mm')}</small></button>
+  return <div ref={setNodeRef} className={`month-event color-${task.color} status-${task.status}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} onClick={(event) => { event.stopPropagation(); onOpen() }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onOpen() } }} {...attributes} {...listeners}><SelectionCheckbox selected={batchSelected} label={`选择日程 ${task.title}`} onToggle={onToggleBatch} /><span>{task.status === 'completed' && <Check size={11} />}{task.title}</span><small>{format(new Date(task.start!), 'HH:mm')}</small></div>
 }
 
 function dragStartY(event: Event) {
@@ -216,8 +216,8 @@ function App() {
   const [canUndoImport, setCanUndoImport] = useState(() => loadImportRecovery() !== null)
   const [courseImportOpen, setCourseImportOpen] = useState(false)
   const [canUndoCourseImport, setCanUndoCourseImport] = useState(() => loadCourseRecovery() !== null)
-  const [batchMode, setBatchMode] = useState(false)
   const [batchSelection, setBatchSelection] = useState<Set<string>>(new Set())
+  const [batchDeleteReview, setBatchDeleteReview] = useState<BatchDeleteReview | null>(null)
   const [dragGuide, setDragGuide] = useState<DragGuide | null>(null)
   const [dragPreviewOffsetY, setDragPreviewOffsetY] = useState(0)
   const [zoom, setZoom] = useState<Zoom>(loadCalendarZoom)
@@ -235,6 +235,10 @@ function App() {
 
   useEffect(() => saveTasks(tasks), [tasks])
   useEffect(() => { tasksRef.current = tasks }, [tasks])
+  useEffect(() => {
+    const liveIds = new Set(tasks.filter((task) => !task.deletedAt).map((task) => task.id))
+    setBatchSelection((current) => [...current].every((id) => liveIds.has(id)) ? current : new Set([...current].filter((id) => liveIds.has(id))))
+  }, [tasks])
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer) }, [])
   useEffect(() => {
     if (!toast) return
@@ -622,8 +626,14 @@ function App() {
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel)
     resizeCleanupRef.current = () => { cleanup(); window.removeEventListener('click', suppressClick, true) }
   }
-  function toggleBatchMode() { setBatchMode((current) => !current); setBatchSelection(new Set()); setSelectedTaskId(null) }
-  function toggleBatchTask(taskId: string) { setBatchSelection((current) => { const next = new Set(current); next.has(taskId) ? next.delete(taskId) : next.add(taskId); return next }) }
+  function toggleBatchTask(taskId: string) { setSelectedTaskId(null); setBatchSelection((current) => { const next = new Set(current); next.has(taskId) ? next.delete(taskId) : next.add(taskId); return next }) }
+  function selectCurrentSchedules() {
+    const ids = [...unscheduled, ...visibleTasks].map((task) => task.id)
+    setBatchSelection((current) => new Set([...current, ...ids]))
+  }
+  function selectAllPlans() {
+    setBatchSelection((current) => new Set([...current, ...tasks.filter((task) => task.planDefinition && !task.deletedAt).map((task) => task.id)]))
+  }
   function batchSetStatus(status: TaskStatus) {
     if (batchSelection.size === 0) return
     commitTaskChange('批量状态修改', `已更新 ${batchSelection.size} 项工作的状态`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, status, completedAt: status === 'completed' ? new Date().toISOString() : null } : task))
@@ -649,11 +659,25 @@ function App() {
     commitTaskChange('批量结束提醒修改', `已更新 ${batchSelection.size} 项工作的结束提醒`, (current) => current.map((task) => batchSelection.has(task.id) ? { ...task, endReminder, endRemindedAt: null } : task))
   }
   function batchDelete() {
-    if (batchSelection.size === 0 || !window.confirm(`将选中的 ${batchSelection.size} 项工作移入回收站吗？`)) return
-    const count = batchSelection.size
-    const deletedAt = new Date().toISOString()
-    commitTaskChange('批量删除', `已处理 ${count} 项工作，计划日程归还待安排，其余移入回收站`, (current) => current.map((task) => batchSelection.has(task.id) ? task.planAllocation ? { ...task, start: null, deletedAt: null, status: 'todo', completedAt: null, remindedAt: null, endRemindedAt: null } : { ...task, deletedAt } : task))
-    setBatchSelection(new Set())
+    const review = { tasks: tasksRef.current, selected: new Set(batchSelection) }
+    const summary = batchDeleteSummary(review.tasks, review.selected)
+    if (!summary.count) return
+    if (summary.plans) { setBatchDeleteReview(review); return }
+    if (window.confirm(`将选中的 ${summary.count} 项日程移入回收站吗？`)) applyBatchDelete(review, false)
+  }
+  function applyBatchDelete(review: BatchDeleteReview, deleteChildren: boolean) {
+    if (JSON.stringify(tasksRef.current) !== JSON.stringify(review.tasks)) {
+      setBatchDeleteReview(null); notify('日程已变化，请重新核对勾选后删除'); return
+    }
+    try {
+      const next = deleteSelectedTasks(review.tasks, review.selected, deleteChildren)
+      if (next === review.tasks) return
+      const summary = batchDeleteSummary(review.tasks, review.selected)
+      const trashed = next.filter((task) => task.deletedAt && !review.tasks.find((old) => old.id === task.id)?.deletedAt).length
+      const message = summary.plans ? `已删除 ${summary.plans} 个长期计划${trashed ? `，${trashed} 个日程移入回收站` : '，子日程已保留'}；可撤销` : `已将 ${trashed} 个日程移入回收站`
+      commitTaskChange('批量删除', message, () => { saveTasks(next); return next })
+      setBatchSelection(new Set()); setSelectedTaskId(null); setEditingTaskId(null); setEditingPlanId(null); setBatchDeleteReview(null)
+    } catch { notify('浏览器存储空间不足，删除未保存，原有日程保留') }
   }
   function restoreTask(taskId: string) {
     commitTaskChange('恢复工作', '工作已恢复', (current) => current.map((task) => task.id === taskId ? { ...task, deletedAt: null } : task))
@@ -684,7 +708,7 @@ function App() {
       <div className="time-rail">{Array.from({ length: (timeRange.end - timeRange.start) / 60 + 1 }, (_, index) => <span key={index} style={{ top: index * slotHeight * 4 }} hidden={slotHeight < 6 && index % 2 !== 0 && index !== (timeRange.end - timeRange.start) / 60}>{String(timeRange.start / 60 + index).padStart(2, '0')}:00</span>)}</div>
       {days.map((day) => {
         const layout = layoutDayTasks(filteredTasks.filter((task) => task.start && isSameDay(new Date(task.start), day)), resizePreview, slotHeight, timeRange)
-        return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(0, timeRange.start + slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} isResizing={resizePreview?.id === item.task.id} batchMode={batchMode} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
+        return <DroppableDayTrack day={day} guide={dragGuide} key={day.toISOString()}><div className="drop-slots">{slots.map((slotIndex) => { const slot = new Date(day); slot.setHours(0, timeRange.start + slotIndex * SLOT_MINUTES, 0, 0); return <TimeSlot key={slotIndex} slot={slot} onClick={() => selectedTaskId && scheduleTask(selectedTaskId, slot)} /> })}</div><div className="event-layer">{layout.map((item) => <CalendarEvent key={item.task.id} item={item} duration={resizePreview?.id === item.task.id ? resizePreview.duration : item.task.duration} isResizing={resizePreview?.id === item.task.id} batchSelected={batchSelection.has(item.task.id)} onOpen={() => beginEdit(item.task)} onToggleBatch={() => toggleBatchTask(item.task.id)} onStatus={(status) => updateStatus(item.task.id, status)} onResize={(event) => startResize(event, item.task)} />)}</div></DroppableDayTrack>
       })}
     </div>
   }
@@ -692,7 +716,7 @@ function App() {
     const days = monthDays(anchor)
     return <div className="month-view"><div className="month-weekdays">{['一','二','三','四','五','六','日'].map((day) => <span key={day}>周{day}</span>)}</div><div className="month-grid">{days.map((day) => {
       const label = monthLabel(day, anchor); const dayTasks = filteredTasks.filter((task) => taskStartsIn(task, day, 'month'))
-      return <MonthCell day={day} className={`month-cell${label.isOutside ? ' is-outside' : ''}${isSameDay(day, new Date()) ? ' is-today' : ''}`} key={day.toISOString()} onSchedule={() => selectedTaskId && scheduleTask(selectedTaskId, day)}><span className="month-date">{label.day}</span><div className="month-events">{dayTasks.slice(0, 3).map((task) => <MonthEvent key={task.id} task={task} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onOpen={() => beginEdit(task)} onToggleBatch={() => toggleBatchTask(task.id)} />)}{dayTasks.length > 3 && <button type="button" className="more-events" onClick={(event) => { event.stopPropagation(); setAnchor(day); setView('day') }}>+{dayTasks.length - 3} 项</button>}</div></MonthCell>
+      return <MonthCell day={day} className={`month-cell${label.isOutside ? ' is-outside' : ''}${isSameDay(day, new Date()) ? ' is-today' : ''}`} key={day.toISOString()} onSchedule={() => selectedTaskId && scheduleTask(selectedTaskId, day)}><span className="month-date">{label.day}</span><div className="month-events">{dayTasks.slice(0, 3).map((task) => <MonthEvent key={task.id} task={task} batchSelected={batchSelection.has(task.id)} onOpen={() => beginEdit(task)} onToggleBatch={() => toggleBatchTask(task.id)} />)}{dayTasks.length > 3 && <button type="button" className="more-events" onClick={(event) => { event.stopPropagation(); setAnchor(day); setView('day') }}>+{dayTasks.length - 3} 项</button>}</div></MonthCell>
     })}</div></div>
   }
   function renderToday() {
@@ -707,7 +731,7 @@ function App() {
   }
 
   function renderPlanTask(task: Task) {
-    return <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />
+    return <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchSelected={batchSelection.has(task.id)} onSelect={() => setSelectedTaskId((current) => current === task.id ? null : task.id)} onToggleBatch={() => toggleBatchTask(task.id)} onEdit={() => beginEdit(task)} />
   }
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
   return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
@@ -725,9 +749,11 @@ function App() {
       </header>
       {courseImportOpen && <CourseImport tasks={tasks} canUndo={canUndoCourseImport} onApply={importCourses} onUndo={undoLastCourseImport} onClose={() => setCourseImportOpen(false)} />}
       <DeadlineStrip tasks={tasks} now={now} onOpen={(plan) => setEditingPlanId(plan.id)} />
+      <BatchToolbar count={batchSelection.size} hasPlans={tasks.some((task) => task.planDefinition && batchSelection.has(task.id))} tags={batchTags} canAddTags={parseTags(batchTags).length > 0} onTags={setBatchTags} onSelectSchedules={selectCurrentSchedules} onSelectPlans={selectAllPlans} onClear={() => setBatchSelection(new Set())} onDelete={batchDelete} onStatus={batchSetStatus} onColor={batchSetColor} onStartReminder={batchSetStartReminder} onEndReminder={batchSetEndReminder} onAddTags={batchSetTags} />
+      {batchDeleteReview && <BatchDeleteDialog review={batchDeleteReview} onClose={() => setBatchDeleteReview(null)} onConfirm={(deleteChildren) => applyBatchDelete(batchDeleteReview, deleteChildren)} />}
       <div className="workspace">
         <DroppableBacklog>
-          <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && !batchMode && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
+          <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
           <form className="task-form" onSubmit={createTask}>
             <label className="sr-only" htmlFor="task-title">工作内容</label>
             <div className="input-row"><input id="task-title" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} /><button className="primary-icon-button" type="submit" aria-label="创建工作方块" title="创建工作方块"><Plus size={18} /></button></div>
@@ -736,14 +762,14 @@ function App() {
             <input id="task-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} />
             <div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div>
           </form>
-          <LongTermPlans tasks={tasks} commit={commitTaskChange} notify={notify} renderTask={renderPlanTask} editingPlan={tasks.find((task) => task.id === editingPlanId && task.planDefinition) ?? null} onEditPlan={(plan) => setEditingPlanId(plan?.id ?? null)} now={now} />
+          <LongTermPlans tasks={tasks} commit={commitTaskChange} notify={notify} renderTask={renderPlanTask} editingPlan={tasks.find((task) => task.id === editingPlanId && task.planDefinition) ?? null} onEditPlan={(plan) => setEditingPlanId(plan?.id ?? null)} now={now} batchSelection={batchSelection} onToggleBatch={toggleBatchTask} />
           <div className="filter-bar">
             <div className="search-field"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作" placeholder="搜索工作或标签" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></div>
             <div className="filter-selects"><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="按标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">全部标签</option>{allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></div>
           </div>
-          <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchMode={batchMode} batchSelected={batchSelection.has(task.id)} onSelect={() => batchMode ? toggleBatchTask(task.id) : setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{activeTasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
+          <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchSelected={batchSelection.has(task.id)} onSelect={() => setSelectedTaskId((current) => current === task.id ? null : task.id)} onToggleBatch={() => toggleBatchTask(task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{activeTasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
         </DroppableBacklog>
-        <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}<button className={`secondary-button batch-toggle${batchMode ? ' is-active' : ''}`} type="button" onClick={toggleBatchMode}><ListChecks size={15} />{batchMode ? '退出批量' : '批量管理'}</button></div></div>{batchMode && <div className="batch-toolbar"><strong>已选择 {batchSelection.size} 项</strong><div className="batch-actions"><select aria-label="批量修改状态" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStatus(event.target.value as TaskStatus); event.currentTarget.value = '' }}><option value="" disabled>修改状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="批量修改颜色" defaultValue="" onChange={(event) => { if (event.target.value) batchSetColor(event.target.value as TaskColor); event.currentTarget.value = '' }}><option value="" disabled>修改颜色</option>{COLORS.map((color) => <option value={color.value} key={color.value}>{color.label}</option>)}</select><select aria-label="批量设置开始提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetStartReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>开始提醒</option>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><select aria-label="批量设置结束提醒" defaultValue="" onChange={(event) => { if (event.target.value) batchSetEndReminder(event.target.value); event.currentTarget.value = '' }}><option value="" disabled>结束提醒</option><option value="on">开启</option><option value="off">关闭</option></select><input aria-label="批量添加标签" placeholder="添加标签" value={batchTags} onChange={(event) => setBatchTags(event.target.value)} /><button className="secondary-button" type="button" disabled={batchSelection.size === 0 || parseTags(batchTags).length === 0} onClick={batchSetTags}>添加标签</button><button className="danger-button batch-delete" type="button" disabled={batchSelection.size === 0} onClick={batchDelete}><Trash2 size={15} />删除</button></div></div>}{calendarBody()}</main>
+        <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}</div></div>{calendarBody()}</main>
       </div>
       {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><TimeFields prefix="edit" start={editingStart} duration={editingDuration} end={editingEnd} mode={editingTimeMode} onStart={setEditingStart} onDuration={setEditingDuration} onEnd={setEditingEnd} onMode={setEditingTimeMode} />{tasks.find((task) => task.id === editingTaskId)?.planAllocation && <button type="button" className="plan-link" onClick={() => { const planId = tasks.find((task) => task.id === editingTaskId)?.planAllocation?.planId; setEditingTaskId(null); if (planId) setEditingPlanId(planId) }}>查看所属长期计划</button>}<label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
       {trashOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTrashOpen(false)}><section className="edit-dialog trash-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><div><h2 id="trash-title">回收站</h2><p>{trashedTasks.length} 项工作</p></div><button className="icon-button" type="button" aria-label="关闭回收站" title="关闭" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashedTasks.length === 0 ? <div className="trash-empty"><Trash2 size={22} /><span>回收站为空</span></div> : <><div className="trash-list">{trashedTasks.map((task) => <div className="trash-item" key={task.id}><div><strong>{task.title}</strong><small>{format(new Date(task.deletedAt!), 'yyyy-MM-dd HH:mm')} 删除</small></div><button className="secondary-button" type="button" onClick={() => restoreTask(task.id)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" aria-label={`永久删除 ${task.title}`} title="永久删除" onClick={() => permanentlyDeleteTask(task.id)}><Trash2 size={15} /></button></div>)}</div><div className="dialog-actions trash-actions"><button className="danger-primary-button" type="button" onClick={emptyTrash}><Trash2 size={15} />清空回收站</button></div></>}</section></div>}
