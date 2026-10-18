@@ -37,7 +37,7 @@ button, [draggable="true"] { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]:focus-visible { outline: 2px solid #3479b9; outline-offset: 2px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-.app-shell { min-height: 100vh; color: var(--text); }
+.app-shell { min-height: 100vh; padding-bottom: 96px; color: var(--text); }
 .topbar { height: 60px; display: flex; align-items: center; gap: 20px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand { min-width: 250px; display: flex; align-items: center; gap: 10px; font-weight: 600; }
 .brand-mark { width: 30px; height: 30px; display: grid; place-items: center; color: var(--strong-text); background: var(--strong); border-radius: 7px; }
@@ -143,13 +143,12 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .task-card { position: relative; min-width: 0; min-height: 68px; display: flex; align-items: flex-start; gap: 7px; padding: 10px 8px 9px 7px; color: var(--text); background: var(--task-soft); border: 1px solid transparent; border-left: 4px solid var(--task-color); border-radius: 6px; transition: transform 160ms ease, box-shadow 160ms ease, opacity 100ms ease, border-color 160ms ease; cursor: grab; user-select: none; }
 .task-card:hover { transform: translateY(-1px); box-shadow: 0 7px 18px rgba(31,38,43,.09); }
 .task-card.is-selected { border-color: var(--task-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-color) 25%, transparent); }
-.task-card.is-batch-selected, .calendar-event.is-batch-selected, .month-event.is-batch-selected { box-shadow: inset 0 0 0 2px var(--task-color), 0 0 0 2px color-mix(in srgb, var(--task-color) 24%, transparent); }
+.task-card.is-batch-selected, .calendar-event.is-batch-selected, .month-event.is-batch-selected, .plan-card.is-batch-selected { box-shadow: inset 0 0 0 2px var(--task-color), 0 0 0 2px color-mix(in srgb, var(--task-color) 24%, transparent); }
 .task-card.is-dragging, .calendar-event.is-dragging, .month-event.is-dragging { transform: none !important; opacity: 0; box-shadow: none; }
 .drag-handle { flex: 0 0 auto; display: inline-flex; margin-top: 1px; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); cursor: grab; touch-action: none; }
 .drag-handle:active { cursor: grabbing; }
 .drag-overlay { width: min(240px, calc(100vw - 24px)); transform: translateY(var(--drag-preview-offset-y, 0)) scale(1.035); transform-origin: top center; box-shadow: 0 16px 34px rgba(31,38,43,.24); cursor: grabbing; pointer-events: none; }
-.batch-checkbox { width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; border: 1px solid color-mix(in srgb, var(--task-color) 55%, #89949d); border-radius: 4px; background: rgba(255,255,255,.72); }
-.batch-checkbox.is-checked { background: var(--task-color); border-color: var(--task-color); }
+.batch-checkbox { appearance: auto; width: 18px; height: 18px; min-width: 18px; margin: 0; padding: 0; flex: 0 0 auto; accent-color: var(--task-color, #3479b9); cursor: pointer; touch-action: manipulation; }
 .task-copy { min-width: 0; flex: 1; }
 .task-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .task-copy .task-tags span { max-width: 100%; display: block; overflow: hidden; margin-top: 0; padding: 2px 5px; color: var(--muted); background: rgba(255,255,255,.62); border-radius: 4px; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
@@ -177,8 +176,23 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .work-total { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .batch-toggle { min-height: 32px; font-size: 12px; white-space: nowrap; }
 .batch-toggle.is-active { color: var(--strong-text); border-color: var(--strong); background: var(--strong); }
-.batch-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: -3px 0 12px; padding: 9px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
-.batch-toolbar > strong { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.batch-toolbar { position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 14; display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 24px); padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 20px #00000018; }
+.batch-selection-row { display: contents; }
+.batch-selection-row > strong { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.batch-selection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.batch-selection-actions .text-button { min-height: 32px; margin: 0; }
+.batch-selection-actions .text-button:disabled { opacity: .45; cursor: default; }
+.batch-help { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.batch-delete-children { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0; line-height: 1.6; }
+.batch-delete-children input { width: 18px; height: 18px; flex-shrink: 0; margin: 3px 0 0; }
+.batch-delete-dialog p { font-size: 13px; line-height: 1.7; }
+.batch-more { flex-shrink: 0; }
+.batch-more summary { display: flex; align-items: center; min-height: 32px; color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
+.batch-more-panel { position: absolute; right: 50%; transform: translateX(50%); bottom: calc(100% + 8px); width: min(520px, calc(100vw - 24px)); max-height: 50vh; overflow: auto; display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 4px 20px #00000018; }
+.plans-heading { flex-wrap: wrap; gap: 6px; }
+.plans-heading-actions { display: flex; align-items: center; gap: 8px; }
+.plan-card-heading { gap: 8px; }
+.plan-card-heading strong { flex: 1; }
 .batch-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 7px; }
 .batch-actions input { width: 130px; height: 32px; font-size: 12px; }
 .batch-actions .secondary-button:disabled { cursor: not-allowed; opacity: .45; }
@@ -295,22 +309,23 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .calendar-event.is-tiny { padding: 0 4px; }
 .calendar-event.is-tiny .event-main span { display: none; }
 .calendar-event.is-tiny .event-main strong { font-size: 10px; line-height: 11px; }
-.calendar-event:not(.is-batch-mode) { padding-left: 25px; }
-.event-actions { position: absolute; top: 3px; right: 3px; display: flex; gap: 2px; opacity: 0; }
+.calendar-event { padding-left: 25px; padding-right: 25px; }
+.calendar-event .batch-checkbox { position: absolute; top: 1px; right: 2px; z-index: 3; max-height: calc(100% - 2px); }
+.event-actions { position: absolute; top: 23px; right: 3px; display: flex; gap: 2px; opacity: 0; }
 .calendar-event:hover .event-actions, .calendar-event:focus-within .event-actions { opacity: 1; }
 .event-actions button { width: 23px; height: 23px; display: grid; place-items: center; padding: 0; color: var(--text); border: 0; border-radius: 4px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
-.resize-handle { position: absolute; right: 3px; bottom: 1px; width: 18px; max-width: max(0px, calc(100% - 25px)); height: 10px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: ns-resize; opacity: 0; touch-action: none; }
+.resize-handle { position: absolute; right: 24px; bottom: 1px; width: 18px; max-width: max(0px, calc(100% - 25px)); height: 10px; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: ns-resize; opacity: 0; touch-action: none; }
 .resize-handle::after { content: ""; position: absolute; left: 2px; right: 2px; top: 4px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--task-color) 65%, transparent); }
 .calendar-event:hover .resize-handle, .resize-handle:focus-visible { opacity: 1; }
 .resize-handle svg { display: none; pointer-events: none; }
 @media (min-width: 901px) {
-  .calendar-event.is-split-handles:not(.is-batch-mode) { padding-left: 23px; padding-right: 21px; }
-  .is-split-handles .event-move-handle { width: 50%; justify-items: start; padding-left: 3px; }
-  .is-split-handles .resize-handle { top: 0; right: 0; bottom: 0; width: 50%; max-width: none; height: auto; border-radius: 0; border-left: 1px solid color-mix(in srgb, var(--task-color) 20%, transparent); display: grid; justify-items: end; align-items: center; padding-right: 3px; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); opacity: 1; }
+  .calendar-event.is-split-handles { padding-left: 23px; padding-right: 43px; }
+  .is-split-handles .event-move-handle { width: calc((100% - 22px) / 2); justify-items: start; padding-left: 3px; }
+  .is-split-handles .resize-handle { top: 0; right: 22px; bottom: 0; width: calc((100% - 22px) / 2); max-width: none; height: auto; border-radius: 0; border-left: 1px solid color-mix(in srgb, var(--task-color) 20%, transparent); display: grid; justify-items: end; align-items: center; padding-right: 3px; color: color-mix(in srgb, var(--task-color) 70%, var(--text)); opacity: 1; }
   .is-split-handles .resize-handle::after { display: none; }
   .is-split-handles .resize-handle svg { display: block; max-height: 100%; }
   .is-split-handles .resize-handle:hover, .is-split-handles .resize-handle:focus-visible { background: color-mix(in srgb, var(--task-color) 12%, transparent); }
-  .is-split-handles:not(.is-batch-mode) .event-main { position: relative; z-index: 1; pointer-events: none; }
+  .is-split-handles .event-main { position: relative; z-index: 1; pointer-events: none; }
   .is-split-handles .event-actions { display: none; }
 }
 .calendar-event.status-in-progress { box-shadow: inset 0 0 0 1px var(--task-color), 0 4px 12px rgba(31,38,43,.1); }
@@ -558,7 +573,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .warning-icon { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 10px; color: var(--danger); background: #fff0f0; border-radius: 50%; }
 .replace-confirmation h3 { margin: 0; font-size: 16px; font-weight: 600; }
 .replace-confirmation p { margin: 8px auto 0; max-width: 410px; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.toast { position: fixed; left: 50%; bottom: 24px; z-index: 80; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 9px 12px 9px 14px; color: #fff; background: #23292e; border-radius: 6px; box-shadow: 0 8px 24px rgba(20,25,29,.2); font-size: 13px; white-space: nowrap; }
+.toast { position: fixed; left: 50%; bottom: 96px; z-index: 80; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 9px 12px 9px 14px; color: #fff; background: #23292e; border-radius: 6px; box-shadow: 0 8px 24px rgba(20,25,29,.2); font-size: 13px; white-space: nowrap; }
 .toast span { overflow: hidden; text-overflow: ellipsis; }
 .toast button { flex: 0 0 auto; padding: 3px 5px; color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,.7); background: transparent; font-size: 12px; font-weight: 600; }
 
@@ -593,7 +608,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .resize-handle { display: none; }
   .event-actions { opacity: 1; }
   .calendar-heading-actions { align-items: flex-end; flex-direction: column; gap: 5px; }
-  .batch-toolbar { align-items: flex-start; flex-direction: column; }
+  .batch-toolbar { gap: 8px; padding: 8px; }
   .batch-actions { width: 100%; }
   .batch-actions select { flex: 1; min-width: 0; }
   .batch-actions input { flex: 1; min-width: 130px; }
@@ -613,7 +628,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .batch-actions { flex-wrap: wrap; }
   .filter-bar { grid-template-columns: 1fr; }
   .batch-actions select { min-width: calc(50% - 4px); }
-  .batch-delete { order: initial; width: 100%; }
+  .batch-selection-actions .batch-delete { order: initial; width: auto; }
   .primary-button { margin-left: auto; }
   .today-stats { grid-template-columns: 1fr 1fr; }
   .today-stats > div { padding: 7px 10px; }

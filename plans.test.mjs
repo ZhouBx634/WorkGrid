@@ -3,6 +3,7 @@ import { createPlan, deadlineLabel, duePlanReminders, mergePlanParts, planChildr
 import { createBackup, parseBackupText, planImport, validateTaskList } from './src/backup.ts'
 import { parseCloudSnapshot, cloudDataMatches, taskFingerprint, classifyIncomingCloudSnapshot } from './src/cloudData.ts'
 import { durationFromTimes, endFromDuration } from './src/scheduling.ts'
+import { batchDeleteSummary, deleteSelectedTasks } from './src/batchDelete.ts'
 
 const definition = { type: 'countable', totalUnits: 10, unitLabel: '节', deadline: null, notes: '', reminderMinutes: null }
 const plan = createPlan('高数网课', 'blue', 90, definition)
@@ -70,4 +71,42 @@ assert.equal(durationFromTimes('2026-10-15T10:12', '2026-10-15T10:11'), null)
 assert.equal(durationFromTimes('bad', 'bad'), null)
 assert.equal(endFromDuration('2026-10-15T10:12', '95'), '2026-10-15T11:47')
 assert.equal(endFromDuration('2026-10-15T10:12', ''), '')
-console.log('long-term plan and time-input tests passed')
+// Batch deletion preserves graph integrity, exact times, restore data, and unrelated records.
+const deletedAt = '2026-10-18T04:00:00.000Z'
+const oldDeletedAt = '2026-10-17T04:00:00.000Z'
+const otherPlan = createPlan('保留的计划', 'green', 30, definition)
+const deletionTasks = [...tasks, ddl, { ...ddlWork, planAllocation: { planId: ddl.id, units: [] } }, otherPlan, { ...children[0], id: 'old-trash', deletedAt: oldDeletedAt, planAllocation: { planId: otherPlan.id, units: [1] } }]
+const beforeDeletion = JSON.stringify(deletionTasks)
+const selection = new Set([plan.id, ordinary.id, 'missing-id'])
+assert.deepEqual(batchDeleteSummary(deletionTasks, selection), { count: 2, plans: 1, schedules: 1, children: 9 })
+assert.equal(deleteSelectedTasks(deletionTasks, new Set(['missing-id'])), deletionTasks)
+const kept = deleteSelectedTasks(deletionTasks, selection, false, deletedAt)
+assert.equal(kept.some(t => t.id === plan.id), false)
+assert.equal(kept.find(t => t.id === ordinary.id).deletedAt, deletedAt)
+assert.equal(kept.find(t => t.id === merged.id).start, '2026-10-15T02:12:00.000Z')
+assert.equal(kept.find(t => t.id === merged.id).status, 'completed')
+assert.equal(kept.find(t => t.id === merged.id).planAllocation, undefined)
+assert.equal(kept.find(t => t.id === merged.id).deletedAt, null)
+assert.equal(kept.find(t => t.id === ddl.id), ddl)
+assert.doesNotThrow(() => validateTaskList(kept))
+const both = deleteSelectedTasks(deletionTasks, new Set([plan.id, merged.id]), false, deletedAt)
+assert.equal(both.find(t => t.id === merged.id).deletedAt, deletedAt)
+assert.equal(both.filter(t => t.deletedAt === deletedAt).length, 1)
+const all = deleteSelectedTasks(deletionTasks, new Set([plan.id, ddl.id, otherPlan.id]), true, deletedAt)
+assert.equal(all.some(t => t.planDefinition || t.planAllocation), false)
+assert.equal(all.find(t => t.id === ordinary.id), ordinary)
+assert.equal(all.find(t => t.id === 'old-trash').deletedAt, oldDeletedAt)
+assert.equal(all.filter(t => t.deletedAt === deletedAt).length, 10)
+assert.doesNotThrow(() => validateTaskList(all))
+assert.doesNotThrow(() => parseBackupText(JSON.stringify(createBackup(all))))
+assert.doesNotThrow(() => parseCloudSnapshot({ tasks: all, revision: 4, updated_at: deletedAt }))
+const justChild = deleteSelectedTasks(deletionTasks, new Set([merged.id]), false, deletedAt)
+assert.deepEqual(justChild.find(t => t.id === merged.id), { ...deletionTasks.find(t => t.id === merged.id), deletedAt })
+assert.equal(justChild.find(t => t.id === plan.id), plan)
+assert.equal(planStats(justChild, plan).scheduled, 0)
+assert.equal(planStats(justChild, plan).completed, 0)
+assert.doesNotThrow(() => validateTaskList(justChild))
+assert.doesNotThrow(() => validateTaskList(justChild.map(t => t.id === merged.id ? { ...t, deletedAt: null } : t)))
+assert.equal(deleteSelectedTasks(justChild, new Set([merged.id])), justChild)
+assert.equal(JSON.stringify(deletionTasks), beforeDeletion)
+console.log('long-term plan, batch deletion, and time-input tests passed')
