@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, MouseSensor, TouchSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
-import { ArrowUpDown, Bell, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { ArrowUpDown, Bell, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock3, GripVertical, Pause, Pencil, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { addMinutes, format, isBefore, isSameDay, startOfDay } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { monthDays, monthLabel, moveAnchor, normalizeDropDate, taskIsVisible, taskStartsIn, viewTitle, weekDays } from './calendar'
@@ -10,12 +10,13 @@ import InstallApp from './components/InstallApp'
 import CourseImport from './components/CourseImport'
 import CalendarZoom from './components/CalendarZoom'
 import LongTermPlans, { DeadlineStrip } from './components/LongTermPlans'
+import PendingPlanTasks from './components/PendingPlanTasks'
 import TimeFields from './components/TimeFields'
 import BatchToolbar from './components/BatchToolbar'
 import BatchDeleteDialog, { type BatchDeleteReview } from './components/BatchDeleteDialog'
 import SelectionCheckbox from './components/SelectionCheckbox'
 import { batchDeleteSummary, deleteSelectedTasks } from './batchDelete'
-import { duePlanReminders } from './plans'
+import { duePlanReminders, reorderPlans } from './plans'
 import { DEFAULT_SLOT_HEIGHT, ZOOM_STORAGE_KEY, fitSlotHeight, focusedTimeRange, loadCalendarZoom, stepCalendarZoom, timeRangeLabel, type CalendarZoom as Zoom, type TimeRange } from './calendarZoom'
 import { applyCourseImport, undoCourseImport, type CourseOccurrence } from './courseImport'
 import { clearCourseRecovery, loadCourseRecovery, saveCourseRecovery } from './courseRecovery'
@@ -139,11 +140,13 @@ function CalendarEvent({ item, duration, isResizing, batchSelected, onOpen, onTo
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({ id: `task:${task.id}` })
   const resizeStartedCompact = useRef(false)
   const splitHandles = item.height < 42 || (isResizing && resizeStartedCompact.current)
+  // Overlap cards need room for a title, not a full toolbar above and below it.
+  const compact = item.height < (item.laneCount > 1 ? 72 : 42)
   const start = new Date(task.start!)
   const end = addMinutes(start, duration)
   const style = { top: item.top, height: item.height, left: `calc(${(item.lane / item.laneCount) * 100}% + 3px)`, width: `calc(${100 / item.laneCount}% - 6px)` }
   return (
-    <article ref={setNodeRef} className={`calendar-event color-${task.color} status-${task.status}${item.height < 42 ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${splitHandles ? ' is-split-handles' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); onOpen() }} {...attributes} {...listeners}>
+    <article ref={setNodeRef} data-lanes={item.laneCount} className={`calendar-event color-${task.color} status-${task.status}${item.laneCount === 2 ? ' has-two-lanes' : item.laneCount > 2 ? ' has-many-lanes' : ''}${compact ? ' is-compact' : ''}${item.height < 30 ? ' is-tiny' : ''}${splitHandles ? ' is-split-handles' : ''}${batchSelected ? ' is-batch-selected' : ''}${isDragging ? ' is-dragging' : ''}`} style={style} title={`${task.title} · ${format(start, 'HH:mm')} - ${format(end, 'HH:mm')}`} aria-label={`${task.title}，${STATUS_LABELS[task.status]}，${format(start, 'HH:mm')} 至 ${format(end, 'HH:mm')}`} onClick={(event) => { event.stopPropagation(); onOpen() }} {...attributes} {...listeners}>
       <SelectionCheckbox selected={batchSelected} label={`选择日程 ${task.title}`} onToggle={onToggleBatch} />
       <button ref={setActivatorNodeRef} type="button" className="event-move-handle" aria-label={`拖动移动 ${task.title}`} title={splitHandles ? '左半边拖动移动，点击编辑' : '按住拖动移动日程'} onMouseDown={(event) => { event.stopPropagation(); listeners?.onMouseDown?.(event) }} onTouchStart={(event) => { event.stopPropagation(); listeners?.onTouchStart?.(event) }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (splitHandles && !isDragging) onOpen() }}><GripVertical size={14} aria-hidden="true" /></button>
       <div className="event-main"><strong>{task.title}</strong><span>{format(start, 'HH:mm')} - {format(end, 'HH:mm')}</span>{task.calendarImport && <small className="course-event-details" title={[task.calendarImport.location, task.calendarImport.teacher, task.calendarImport.teachingClass].filter(Boolean).join(' · ')}>{[task.calendarImport.location, task.calendarImport.teacher].filter(Boolean).join(' · ')}</small>}</div>
@@ -185,7 +188,11 @@ function App() {
   const [draftEnd, setDraftEnd] = useState('')
   const [draftTimeMode, setDraftTimeMode] = useState<'duration' | 'end'>('end')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [ordinaryOpen, setOrdinaryOpen] = useState(true)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const [quickPlanId, setQuickPlanId] = useState<string | null>(null)
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
+  const [draggingPlanId, setDraggingPlanId] = useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   useEffect(() => () => resizeCleanupRef.current?.(), [])
@@ -431,7 +438,14 @@ function App() {
     event.preventDefault(); const title = draft.title.trim(); if (!title) return
     const duration = draftTimeMode === 'end' && draftStart ? durationFromTimes(draftStart, draftEnd) : parseDurationInput(draftDuration)
     if (duration === null) { notify('请填写有效时间：结束须晚于开始，时长为 1 至 720 分钟'); return }
-    commitTaskChange('创建工作', draftStart ? '已创建并安排到日历' : '已创建工作方块', (current) => [{ id: makeId(), title, color: draft.color, duration, start: fromDateTimeLocal(draftStart), createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags), deletedAt: null }, ...current])
+    try {
+      commitTaskChange('创建工作', draftStart ? '已创建并安排到日历' : '已创建工作方块', (current) => {
+        const next = [{ id: makeId(), title, color: draft.color, duration, start: fromDateTimeLocal(draftStart), createdAt: new Date().toISOString(), status: 'todo' as const, completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: parseTags(draftTags), deletedAt: null }, ...current]
+        saveTasks(next)
+        return next
+      })
+    } catch { notify('浏览器存储空间不足，操作未保存，原有日程保留'); return }
+    setCreatingTask(false); setOrdinaryOpen(true)
     setDraft((current) => ({ ...current, title: '', duration, tags: [] })); setDraftDuration(String(duration)); setDraftTags(''); setDraftStart(''); setDraftEnd('')
   }
   function scheduleTask(taskId: string, slot: Date, reopenCompleted?: boolean) {
@@ -455,7 +469,9 @@ function App() {
     dragGuideRef.current = null
     setDragGuide(null)
     setDragPreviewOffsetY(0)
-    if (id.startsWith('task:')) setDraggingTaskId(id.slice(5))
+    if (event.active.data.current?.type === 'lesson-shortcut') setDraggingTaskId(event.active.data.current.taskId)
+    else if (id.startsWith('task:')) setDraggingTaskId(id.slice(5))
+    if (id.startsWith('plan:')) setDraggingPlanId(id.slice(5))
   }
   function dragSlotFromEvent(event: DragMoveEvent | DragEndEvent) {
     const target = event.over?.data.current as { type?: string; day?: string } | undefined
@@ -468,6 +484,7 @@ function App() {
     return { day: target.day, trackTop, previewTop, slot: dropDateFromPosition(new Date(target.day), previewTop, trackTop, slotHeight, SLOT_MINUTES, timeRange.start, timeRange.end) }
   }
   function handleDragMove(event: DragMoveEvent) {
+    if (event.active.data.current?.type === 'plan-order') return
     const result = dragSlotFromEvent(event)
     if (!result) { dragGuideRef.current = null; setDragGuide(null); setDragPreviewOffsetY(0); return }
     const minutes = result.slot.getHours() * 60 + result.slot.getMinutes()
@@ -478,7 +495,21 @@ function App() {
     setDragPreviewOffsetY(result.trackTop + guideTop - result.previewTop)
   }
   function handleDragEnd(event: DragEndEvent) {
-    const taskId = String(event.active.id).replace(/^task:/, '')
+    if (event.active.data.current?.type === 'plan-order') {
+      setDraggingPlanId(null)
+      const fromId = event.active.data.current.planId as string
+      const target = event.over?.data.current
+      if (target?.type !== 'plan-order' || fromId === target.planId) return
+      try {
+        commitTaskChange('计划排序', '计划顺序已保存', (current) => {
+          const next = reorderPlans(current, fromId, target.planId)
+          saveTasks(next)
+          return next
+        })
+      } catch { notify('浏览器存储空间不足，排序未保存，原有日程保留') }
+      return
+    }
+    const taskId = event.active.data.current?.taskId as string | undefined ?? String(event.active.id).replace(/^task:/, '')
     const target = event.over?.data.current as { type?: string; slot?: string; day?: string } | undefined
     const lastGuide = dragGuideRef.current
     setDraggingTaskId(null)
@@ -734,7 +765,9 @@ function App() {
     return <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchSelected={batchSelection.has(task.id)} onSelect={() => setSelectedTaskId((current) => current === task.id ? null : task.id)} onToggleBatch={() => toggleBatchTask(task.id)} onEdit={() => beginEdit(task)} />
   }
   const totalMinutes = visibleTasks.reduce((sum, task) => sum + task.duration, 0)
-  return <DndContext sensors={sensors} collisionDetection={pointerWithin} autoScroll={false} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
+  const activePlan = tasks.find((task) => task.id === draggingPlanId && task.planDefinition)
+  const quickPlan = tasks.find((task) => task.id === quickPlanId && task.planDefinition && !task.deletedAt && task.status !== 'completed')
+  return <DndContext sensors={sensors} collisionDetection={(args) => pointerWithin({ ...args, droppableContainers: args.droppableContainers.filter((container) => args.active.data.current?.type === 'plan-order' ? container.data.current?.type === 'plan-order' : container.data.current?.type !== 'plan-order') })} autoScroll={draggingPlanId !== null} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd} onDragCancel={() => { dragGuideRef.current = null; setDraggingPlanId(null); setDraggingTaskId(null); setDragGuide(null); setDragPreviewOffsetY(0) }}>
     <div className="app-shell">
       {editingTaskId && <div className="recurrence-panel" aria-label="重复日程设置"><label htmlFor="edit-frequency">重复</label><select id="edit-frequency" value={editingFrequency} disabled={!editingStart || !!tasks.find((task) => task.id === editingTaskId)?.planAllocation} onChange={(event) => setEditingFrequency(event.target.value as RecurrenceFrequency | 'none')}><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select>{editingFrequency !== 'none' && <><label htmlFor="edit-until">重复到</label><input id="edit-until" type="date" min={editingStart.slice(0, 10)} value={editingUntil || editingStart.slice(0, 10)} onChange={(event) => setEditingUntil(event.target.value)} />{editingFrequency === 'weekly' && <div className="weekday-picker" aria-label="重复星期">{['日','一','二','三','四','五','六'].map((label, day) => <button key={day} type="button" className={editingWeekdays.includes(day) ? 'is-active' : ''} onClick={() => setEditingWeekdays((current) => current.includes(day) ? current.filter((value) => value !== day) : [...current, day])}>周{label}</button>)}</div>}{tasks.find((task) => task.id === editingTaskId)?.seriesId && <div className="scope-picker"><button type="button" className={editingScope === 'single' ? 'is-active' : ''} onClick={() => setEditingScope('single')}>仅本次</button><button type="button" className={editingScope === 'series' ? 'is-active' : ''} onClick={() => setEditingScope('series')}>整个系列</button></div>}</>}</div>}
       <header className="topbar">
@@ -753,30 +786,38 @@ function App() {
       {batchDeleteReview && <BatchDeleteDialog review={batchDeleteReview} onClose={() => setBatchDeleteReview(null)} onConfirm={(deleteChildren) => applyBatchDelete(batchDeleteReview, deleteChildren)} />}
       <div className="workspace">
         <DroppableBacklog>
-          <div className="panel-heading"><div><h1>待安排</h1><span>{unscheduled.length} 个方块</span></div>{selectedTask && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}</div>
-          <form className="task-form" onSubmit={createTask}>
-            <label className="sr-only" htmlFor="task-title">工作内容</label>
-            <div className="input-row"><input id="task-title" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} /><button className="primary-icon-button" type="submit" aria-label="创建工作方块" title="创建工作方块"><Plus size={18} /></button></div>
-            <TimeFields prefix="task" start={draftStart} duration={draftDuration} end={draftEnd} mode={draftTimeMode} onStart={setDraftStart} onDuration={setDraftDuration} onEnd={setDraftEnd} onMode={setDraftTimeMode} />
-            <label className="field-label" htmlFor="task-tags">标签（逗号分隔）</label>
-            <input id="task-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} />
-            <div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div>
-          </form>
-          <LongTermPlans tasks={tasks} commit={commitTaskChange} notify={notify} renderTask={renderPlanTask} editingPlan={tasks.find((task) => task.id === editingPlanId && task.planDefinition) ?? null} onEditPlan={(plan) => setEditingPlanId(plan?.id ?? null)} now={now} batchSelection={batchSelection} onToggleBatch={toggleBatchTask} />
+          <div className="backlog-base" inert={!!quickPlan}>
+          <section className="ordinary-schedules" aria-label="普通日程">
+          <div className="sidebar-section-heading"><h2><button type="button" className="sidebar-section-toggle" aria-expanded={ordinaryOpen} aria-controls="ordinary-content" onClick={() => setOrdinaryOpen(!ordinaryOpen)}><ChevronDown size={14} />普通日程<span>{unscheduled.length}</span></button></h2><button type="button" className="icon-button section-add" aria-label="添加普通日程" title="添加普通日程" onClick={() => { setOrdinaryOpen(true); setCreatingTask(true) }}><Plus size={16} /></button></div>
+          <div id="ordinary-content" className="sidebar-section-body" hidden={!ordinaryOpen}>
           <div className="filter-bar">
             <div className="search-field"><Search size={15} aria-hidden="true" /><input aria-label="搜索工作" placeholder="搜索工作或标签" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} /></div>
             <div className="filter-selects"><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="todo">待办</option><option value="in-progress">进行中</option><option value="completed">已完成</option></select><select aria-label="按标签筛选" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="all">全部标签</option>{allTags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></div>
           </div>
           <div className="task-list" aria-live="polite">{unscheduled.map((task) => <TaskCard key={task.id} task={task} selected={selectedTaskId === task.id} batchSelected={batchSelection.has(task.id)} onSelect={() => setSelectedTaskId((current) => current === task.id ? null : task.id)} onToggleBatch={() => toggleBatchTask(task.id)} onEdit={() => beginEdit(task)} />)}{unscheduled.length === 0 && <div className="empty-state"><Check size={20} /><span>{activeTasks.some((task) => !task.start) ? '没有匹配的工作' : '工作已全部安排'}</span></div>}</div>
+          </div></section>
+          <LongTermPlans tasks={tasks} commit={commitTaskChange} notify={notify} renderTask={renderPlanTask} editingPlan={tasks.find((task) => task.id === editingPlanId && task.planDefinition) ?? null} onEditPlan={(plan) => { if (plan) setEditingPlanId(plan.id); else setEditingPlanId(null) }} now={now} batchSelection={batchSelection} onToggleBatch={toggleBatchTask} onQuickArrange={(plan) => setQuickPlanId(plan.id)} />
+          {selectedTask && <button className="clear-selection" type="button" onClick={() => setSelectedTaskId(null)}><X size={14} />取消选择</button>}
+          </div>
+          {quickPlan && <PendingPlanTasks key={quickPlan.id} tasks={tasks} plan={quickPlan} selectedId={selectedTaskId} dragging={draggingTaskId !== null} onSelect={(task) => setSelectedTaskId((current) => current === task.id ? null : task.id)} onEdit={beginEdit} onClose={() => setQuickPlanId(null)} />}
         </DroppableBacklog>
         <main className="calendar-panel"><div className="calendar-heading"><div><h2>{viewTitle(view === 'today' ? today : anchor, view)}</h2><span>{view === 'today' ? '聚焦今天的工作执行' : format(anchor, 'yyyy 年', { locale: zhCN })}</span></div><div className="calendar-heading-actions">{view !== 'today' && <div className="work-total"><Clock3 size={15} />当前视图 {durationLabel(totalMinutes)}</div>}</div></div>{calendarBody()}</main>
       </div>
+      {creatingTask && <div className="modal-backdrop" role="presentation" onMouseDown={() => setCreatingTask(false)} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setCreatingTask(false) } }}><section className="edit-dialog create-task-dialog" role="dialog" aria-modal="true" aria-labelledby="create-task-heading" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="create-task-heading">添加普通日程</h2><button type="button" className="icon-button" aria-label="关闭添加日程" onClick={() => setCreatingTask(false)}><X size={18} /></button></div>
+        <form className="task-form" onSubmit={createTask}>
+          <label htmlFor="task-title">工作内容</label><input id="task-title" autoFocus value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="输入工作内容" maxLength={60} required />
+          <TimeFields prefix="task" start={draftStart} duration={draftDuration} end={draftEnd} mode={draftTimeMode} onStart={setDraftStart} onDuration={setDraftDuration} onEnd={setDraftEnd} onMode={setDraftTimeMode} />
+          <label className="field-label" htmlFor="task-tags">标签（逗号分隔）</label><input id="task-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} />
+          <div className="color-field"><span className="field-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={draft.color === color.value} title={color.label} onClick={() => setDraft((current) => ({ ...current, color: color.value }))}>{draft.color === color.value && <Check size={12} />}</button>)}</div></div>
+          <div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => setCreatingTask(false)}>取消</button><button type="submit" className="primary-button" aria-label="创建工作方块">添加日程</button></div>
+        </form>
+      </section></div>}
       {editingTaskId && <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditingTaskId(null)}><section className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="edit-title">编辑工作方块</h2><button className="icon-button" type="button" aria-label="关闭" title="关闭" onClick={() => setEditingTaskId(null)}><X size={18} /></button></div><form onSubmit={saveEdit}><label htmlFor="edit-task-title">工作内容</label><input id="edit-task-title" autoFocus value={editingDraft.title} onChange={(event) => setEditingDraft((current) => ({ ...current, title: event.target.value }))} maxLength={60} /><TimeFields prefix="edit" start={editingStart} duration={editingDuration} end={editingEnd} mode={editingTimeMode} onStart={setEditingStart} onDuration={setEditingDuration} onEnd={setEditingEnd} onMode={setEditingTimeMode} />{tasks.find((task) => task.id === editingTaskId)?.planAllocation && <button type="button" className="plan-link" onClick={() => { const planId = tasks.find((task) => task.id === editingTaskId)?.planAllocation?.planId; setEditingTaskId(null); if (planId) setEditingPlanId(planId) }}>查看所属长期计划</button>}<label htmlFor="edit-reminder"><Bell size={13} />开始提醒</label><select id="edit-reminder" value={editingReminder === null ? 'none' : String(editingReminder)} disabled={!editingStart} onChange={(event) => { const value = event.target.value === 'none' ? null : Number(event.target.value); setEditingReminder(value); if (value !== null) setEditingEndReminder(true) }}>{REMINDER_OPTIONS.map((option) => <option key={String(option.value)} value={option.value === null ? 'none' : option.value}>{option.label}</option>)}</select><label className="end-reminder-toggle"><input type="checkbox" checked={editingEndReminder} disabled={!editingStart} onChange={(event) => setEditingEndReminder(event.target.checked)} /><span><strong>结束时提醒</strong><small>达到预计结束时间时再次通知</small></span></label>{(editingReminder !== null || editingEndReminder) && <small className="field-hint">{editingStart ? `${editingReminder !== null ? `${reminderLabel(editingReminder)}提醒` : '不在开始前提醒'}${editingEndReminder ? '，并在结束时提醒' : ''}` : '先设置开始时间才能启用提醒'}</small>}<label htmlFor="edit-tags">标签（逗号分隔）</label><input id="edit-tags" value={editingTags} onChange={(event) => setEditingTags(event.target.value)} placeholder="例如：客户，重要" maxLength={200} /><span className="dialog-label">状态</span><div className="status-switcher" role="group" aria-label="任务状态">{(['todo','in-progress','completed'] as TaskStatus[]).map((status) => <button key={status} type="button" className={editingStatus === status ? 'is-active' : ''} onClick={() => setEditingStatus(status)}>{status === 'todo' ? <Circle size={14} /> : status === 'in-progress' ? <Play size={14} /> : <CheckCircle2 size={14} />}{STATUS_LABELS[status]}</button>)}</div><span className="dialog-label">颜色</span><div className="color-picker" role="group" aria-label="方块颜色">{COLORS.map((color) => <button key={color.value} className={`color-swatch color-${color.value}`} type="button" aria-label={color.label} aria-pressed={editingDraft.color === color.value} onClick={() => setEditingDraft((current) => ({ ...current, color: color.value }))}>{editingDraft.color === color.value && <Check size={12} />}</button>)}</div><div className="dialog-actions">{tasks.find((task) => task.id === editingTaskId)?.start && <button className="secondary-button" type="button" onClick={() => { unscheduleTask(editingTaskId); setEditingTaskId(null) }}><RotateCcw size={16} />移回待安排</button>}<button className="danger-button" type="button" aria-label="删除工作方块" title="删除" onClick={deleteEditingTask}><Trash2 size={17} /></button><button className="primary-button" type="submit">保存</button></div></form></section></div>}
       {trashOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setTrashOpen(false)}><section className="edit-dialog trash-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><div><h2 id="trash-title">回收站</h2><p>{trashedTasks.length} 项工作</p></div><button className="icon-button" type="button" aria-label="关闭回收站" title="关闭" onClick={() => setTrashOpen(false)}><X size={18} /></button></div>{trashedTasks.length === 0 ? <div className="trash-empty"><Trash2 size={22} /><span>回收站为空</span></div> : <><div className="trash-list">{trashedTasks.map((task) => <div className="trash-item" key={task.id}><div><strong>{task.title}</strong><small>{format(new Date(task.deletedAt!), 'yyyy-MM-dd HH:mm')} 删除</small></div><button className="secondary-button" type="button" onClick={() => restoreTask(task.id)}><RotateCcw size={14} />恢复</button><button className="danger-button" type="button" aria-label={`永久删除 ${task.title}`} title="永久删除" onClick={() => permanentlyDeleteTask(task.id)}><Trash2 size={15} /></button></div>)}</div><div className="dialog-actions trash-actions"><button className="danger-primary-button" type="button" onClick={emptyTrash}><Trash2 size={15} />清空回收站</button></div></>}</section></div>}
       {pendingSchedule && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPendingSchedule(null)}><section className="edit-dialog reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="reschedule-title" onMouseDown={(event) => event.stopPropagation()}><div className="dialog-heading"><h2 id="reschedule-title">重新安排已完成任务</h2><button className="icon-button" type="button" aria-label="关闭" onClick={() => setPendingSchedule(null)}><X size={18} /></button></div><p>这个任务已经完成。移动到新时间后，是否将它重新打开为待办？</p><div className="dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingSchedule(null)}>取消</button><button className="secondary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, false); setPendingSchedule(null) }}>保持完成</button><button className="primary-button" type="button" onClick={() => { scheduleTask(pendingSchedule.taskId, pendingSchedule.slot, true); setPendingSchedule(null) }}>重新打开并移动</button></div></section></div>}
       {toast && <div className="toast" role="status"><span>{toast}</span>{undoEntry && <button type="button" onClick={undoLastChange}>撤销</button>}</div>}
     </div>
-    <DragOverlay dropAnimation={null}>{activeTask && <article className={`task-card drag-overlay color-${activeTask.color}`} style={{ '--drag-preview-offset-y': `${dragPreviewOffsetY}px` } as React.CSSProperties}><GripVertical className="drag-handle" size={15} /><div className="task-copy"><strong>{activeTask.title}</strong><span><Clock3 size={13} />{durationLabel(activeTask.duration)}</span></div></article>}</DragOverlay>
+    <DragOverlay dropAnimation={null}>{activePlan ? <article className={`plan-card plan-sort-overlay color-${activePlan.color}`}><GripVertical size={16} /><strong>{activePlan.title}</strong></article> : activeTask && <article className={`task-card drag-overlay color-${activeTask.color}`} style={{ '--drag-preview-offset-y': `${dragPreviewOffsetY}px` } as React.CSSProperties}><GripVertical className="drag-handle" size={15} /><div className="task-copy"><strong>{activeTask.title}</strong><span><Clock3 size={13} />{durationLabel(activeTask.duration)}</span></div></article>}</DragOverlay>
   </DndContext>
 }
 

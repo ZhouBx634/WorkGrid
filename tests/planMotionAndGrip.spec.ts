@@ -150,8 +150,8 @@ for (const focus of [false, true]) {
 test('short events split into equal hit areas at every scale, including overlapping lanes', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop-only resizing')
   await setup(page, [task('短任务', 9), task('重叠任务', 9), task('普通任务', 10, 60)])
-  const short = page.locator('.calendar-event', { hasText: '短任务' })
-  const ordinary = page.locator('.calendar-event', { hasText: '普通任务' })
+  const short = page.locator('.calendar-event').filter({ hasText: '短任务' })
+  const ordinary = page.locator('.calendar-event').filter({ hasText: '普通任务' })
   async function halves(event: Locator) {
     await event.scrollIntoViewIfNeeded()
     const move = (await event.locator('.event-move-handle').boundingBox())!

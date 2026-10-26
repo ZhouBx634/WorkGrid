@@ -116,6 +116,7 @@ test('duration can be cleared and replaced with 56 minutes', async ({ page }, te
   await seedTasks(page, [])
   await page.goto('/')
 
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
   await page.getByPlaceholder('输入工作内容').fill('自由时长任务')
   const duration = page.getByLabel('预计时长（分钟）')
   await duration.fill('')
@@ -684,6 +685,7 @@ test('JSONB ordering and consecutive edits do not repeatedly ask for a sync deci
   await expect(account.getByText('已同步', { exact: true })).toBeVisible()
   await account.getByRole('button', { name: '关闭', exact: true }).click()
   for (const title of ['自动同步第一步', '自动同步第二步']) {
+    await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
     await page.getByPlaceholder('输入工作内容').fill(title)
     await page.getByRole('button', { name: '创建工作方块' }).click()
     await expect.poll(() => cloudTasks.some((item) => item.title === title)).toBe(true)
@@ -785,6 +787,7 @@ test('concurrent cloud changes pause syncing and require an explicit version cho
   await page.goto('/')
   await expect(page.locator('.task-card', { hasText: '同步前任务' })).toBeVisible()
 
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
   await page.getByPlaceholder('输入工作内容').fill('本机新增任务')
   await page.getByRole('button', { name: '创建工作方块' }).click()
 
@@ -833,6 +836,7 @@ test('a cloud conflict can be resolved by keeping and uploading the local versio
     await route.abort()
   })
   await page.goto('/')
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
   await page.getByPlaceholder('输入工作内容').fill('需要保留的本机修改')
   await page.getByRole('button', { name: '创建工作方块' }).click()
 

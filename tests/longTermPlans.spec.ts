@@ -25,8 +25,8 @@ async function createDDL(page: Page) {
   await page.getByRole('button', { name: '新建计划', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '新建长期计划' })
   await dialog.getByLabel('计划名称').fill('期中作业')
-  await dialog.getByLabel('计划类型').selectOption('deadline')
-  await dialog.getByLabel('截止日期与时间', { exact: true }).fill(localDateTime(deadline))
+  await dialog.getByLabel('启用数量拆分').uncheck()
+  await dialog.getByLabel('截止日期与时间（可选）', { exact: true }).fill(localDateTime(deadline))
   await dialog.getByRole('button', { name: '保存计划' }).click()
   return deadline
 }
@@ -94,6 +94,7 @@ test('exact start/end time, duration switching, clearing, and overnight end calc
   await seed(page, []); await page.goto('/')
   const start = new Date(); start.setHours(10,12,0,0)
   const end = new Date(start); end.setHours(11,47)
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
   await page.getByPlaceholder('输入工作内容').fill('精确时间任务')
   const form = page.locator('.task-form')
   await form.getByLabel('开始时间（可暂不安排）').fill(localDateTime(start))

@@ -60,6 +60,52 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
 .install-button svg { color: var(--muted); }
 
 .workspace { min-height: calc(100vh - 60px); display: grid; grid-template-columns: 270px minmax(0, 1fr); }
+.plan-shortcuts { position: fixed; width: 250px; max-height: calc(100dvh - 172px); display: flex; flex-direction: column; z-index: 30; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 36px #20394c24; animation: quick-arrange-in 160ms ease-out; }
+.shortcuts-heading { display: flex; flex: none; align-items: center; gap: 3px; justify-content: space-between; padding: 8px 8px 4px; font-size: 13px; cursor: grab; touch-action: none; user-select: none; }
+.shortcuts-heading.is-dragging-window { cursor: grabbing; }
+.shortcuts-drag-handle { display: grid; place-items: center; color: #d36a3b; }
+.shortcuts-heading .icon-button { width: 28px; height: 28px; }
+.shortcut-content { display: flex; flex-direction: column; min-height: 0; }
+.shortcut-plan-name { display: flex; gap: 8px; justify-content: space-between; align-items: start; padding: 0 12px; margin: 6px 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; }
+.shortcut-plan-name span { flex: none; color: var(--muted); font-size: 10px; font-weight: 400; }
+.shortcut-content > .plan-help { margin: 0; padding: 0 10px 8px; }
+.shortcut-groups { min-height: 0; max-height: min(60vh, 560px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 8px 8px; }
+.shortcut-parts { display: grid; gap: 6px; }
+.shortcut-empty { padding: 16px 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.lesson-shortcut { display: flex; min-width: 0; border: 1px solid transparent; border-left: 3px solid var(--task-color); border-radius: 5px; background: var(--task-soft); }
+.lesson-shortcut.is-selected { outline: 2px solid var(--task-color); outline-offset: -1px; }
+.lesson-shortcut.is-dragging { opacity: .2; }
+.lesson-drag { flex: none; display: grid; place-items: center; width: 25px; padding: 8px 2px; border: 0; background: transparent; cursor: grab; touch-action: none; }
+.lesson-drag > svg { flex: none; color: var(--muted); }
+.lesson-select { flex: 1; min-width: 0; padding: 8px 2px; border: 0; background: transparent; text-align: left; touch-action: pan-y; }
+.lesson-select strong { display: block; font-size: 12px; overflow-wrap: anywhere; }
+.lesson-select small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.lesson-shortcut > .icon-button { flex: none; width: 24px; align-self: center; }
+@media (max-width: 900px) {
+  .plan-shortcuts { width: min(285px, calc(100vw - 20px)); max-height: calc(100dvh - 210px); }
+  .shortcut-groups { max-height: 38dvh; }
+  /* Keep the drag source mounted so touchend/cancel reaches dnd-kit. */
+  .plan-shortcuts.is-dragging-lesson .shortcut-content { display: block; height: 0; overflow: hidden; visibility: hidden; }
+}
+@keyframes quick-arrange-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .plan-shortcuts { animation: none; } }
+.sidebar-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 34px; }
+.sidebar-section-heading h2 { min-width: 0; margin: 0; font-size: 13px; }
+.sidebar-section-toggle { display: flex; align-items: center; gap: 5px; padding: 4px 0; color: var(--text); border: 0; background: transparent; font-weight: 600; text-align: left; }
+.sidebar-section-toggle > span { margin-left: 4px; color: var(--muted); font-weight: 400; font-size: 11px; }
+.sidebar-section-toggle > svg { flex: none; transition: transform 160ms ease; }
+.sidebar-section-toggle[aria-expanded="false"] > svg { transform: rotate(-90deg); }
+.sidebar-section-heading .section-add { width: 28px; height: 28px; }
+.sidebar-section-body[hidden] { display: none; }
+.ordinary-schedules { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.ordinary-schedules .filter-bar { padding-top: 4px; gap: 5px; }
+.ordinary-schedules .filter-bar input, .ordinary-schedules .filter-bar select { height: 29px; font-size: 11px; }
+.ordinary-schedules .task-list { gap: 6px; padding-top: 8px; }
+.ordinary-schedules .task-card { min-height: 56px; padding-top: 7px; padding-bottom: 7px; }
+.ordinary-schedules .empty-state { min-height: 52px; gap: 5px; font-size: 11px; }
+.plan-quick-arrange { display: flex; justify-content: center; align-items: center; gap: 5px; width: 100%; margin-top: 6px; padding: 7px 6px; border: 1px solid #e48a5e; border-radius: 5px; color: #9a431f; background: #fff1e9; font-size: 12px; font-weight: 650; }
+.plan-quick-arrange:hover { color: #7d3418; background: #ffe4d4; border-color: #d86f3d; }
+.create-task-dialog .task-form { display: block; padding: 0; border: 0; }
 .task-panel { min-width: 0; padding: 18px 15px; background: var(--surface); border-right: 1px solid var(--line); transition: background-color 140ms ease, box-shadow 140ms ease; }
 .task-panel.is-over { background: #f4f7f9; box-shadow: inset -3px 0 0 #668baa; }
 .panel-heading { min-height: 38px; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
@@ -94,13 +140,24 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .time-mode button { flex: 1; padding: 6px 4px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; }
 .time-mode button[aria-pressed="true"] { background: white; color: #325a79; box-shadow: 0 1px 3px #20394c12; }
 .time-result { font-size: 12px; color: #325a79; line-height: 1.5; margin: 8px 0; }
-.long-term-plans { padding: 16px 0; border-bottom: 1px solid var(--line); }
+.long-term-plans { padding: 10px 0; }
 .plans-heading, .plan-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .plans-heading h2 { margin: 0; font-size: 14px; }
 .plan-help { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 8px 0; }
-.plan-list { display: grid; gap: 10px; margin-top: 10px; }
-.plan-card { padding: 10px; border: 1px solid var(--line); border-left: 3px solid var(--task-color, #668baa); border-radius: 7px; background: #fff; min-width: 0; }
+.plan-list { display: grid; gap: 8px; margin-top: 6px; }
+.plan-card { padding: 8px; border: 1px solid var(--line); border-left: 3px solid var(--task-color, #668baa); border-radius: 6px; background: #fff; min-width: 0; }
 .plan-card-heading strong { font-size: 13px; overflow-wrap: anywhere; }
+.plan-card { position: relative; }
+.plan-sort-handle { display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 28px; padding: 0; border: 0; border-radius: 4px; color: var(--muted); background: transparent; cursor: grab; touch-action: none; }
+.plan-sort-handle:hover, .plan-sort-handle:focus-visible { background: var(--task-soft); color: var(--text); }
+.plan-sort-handle:active { cursor: grabbing; }
+.plan-card.is-reordering { opacity: .25; }
+.plan-card.is-sort-target { outline: 2px dashed var(--task-color); outline-offset: 2px; }
+.plan-card.is-sort-target::before { content: ''; position: absolute; inset: -6px 0 auto; height: 3px; border-radius: 3px; background: var(--task-color); }
+.plan-card.is-sort-target[data-insert-after="true"]::before { top: auto; bottom: -6px; }
+.plan-sort-overlay { display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px); box-shadow: 0 12px 28px #20394c30; transform: scale(1.025); cursor: grabbing; }
+.plan-sort-overlay strong { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .plan-sort-overlay { transform: none; } }
 .plan-card.is-completed .plan-card-heading strong { text-decoration: line-through; color: var(--muted); }
 .plan-card-heading .icon-button { flex-shrink: 0; width: 26px; height: 26px; }
 .plan-counts, .plan-deadline { margin: 6px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -329,6 +386,26 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .is-split-handles .event-actions { display: none; }
 }
 .calendar-event.status-in-progress { box-shadow: inset 0 0 0 1px var(--task-color), 0 4px 12px rgba(31,38,43,.1); }
+/* Use the existing lane widths: two overlaps get smaller wrapping titles;
+   three or more keep a single line with an ellipsis. Controls keep their hit areas. */
+.calendar-event.has-two-lanes, .calendar-event.has-many-lanes { padding: 22px 5px 13px; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes) .event-main strong { font-size: 10px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; }
+.calendar-event.has-two-lanes:not(.is-compact) .event-main strong { white-space: normal; overflow-wrap: anywhere; }
+.calendar-event.has-many-lanes .event-main strong { font-size: 10px; line-height: 1.35; white-space: nowrap; text-overflow: ellipsis; }
+.calendar-event.has-two-lanes .event-main, .calendar-event.has-many-lanes .event-main { pointer-events: none; }
+.calendar-event.has-two-lanes:not(.is-compact):not(.is-split-handles) .event-move-handle, .calendar-event.has-many-lanes:not(.is-compact):not(.is-split-handles) .event-move-handle { bottom: auto; width: 20px; height: 20px; padding: 0; justify-items: center; }
+/* Reserve separate rows for the toolbar, text, and status actions. Absolute
+   bottom actions otherwise cover wrapping titles in narrow overlap lanes. */
+.calendar-event:is(.has-two-lanes, .has-many-lanes):not(.is-compact):not(.is-split-handles) { display: flex; flex-direction: column; padding-bottom: 12px; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes):not(.is-compact):not(.is-split-handles) .event-main { flex: 1; min-height: 0; overflow: hidden; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes):not(.is-compact):not(.is-split-handles) .event-actions { position: absolute; right: 2px; bottom: 1px; top: auto; max-width: 100%; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes):not(.is-compact):not(.is-split-handles) .event-actions button { flex: 1 1 23px; min-width: 0; }
+.calendar-event.has-two-lanes.is-compact, .calendar-event.has-many-lanes.is-compact { padding: 1px 21px 0 3px; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes).is-compact .event-main strong { padding: 0; line-height: 12px; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes).is-compact .event-main span { display: none; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes).is-compact :is(.event-move-handle, .resize-handle) { align-items: end; }
+.calendar-event:is(.has-two-lanes, .has-many-lanes).is-compact :is(.event-move-handle, .resize-handle) svg { height: 11px; }
+.calendar-event.has-two-lanes.is-compact .event-main strong { white-space: nowrap; }
 .calendar-event.status-completed { filter: saturate(.55); opacity: .66; }
 .calendar-event.status-completed .event-main strong { text-decoration: line-through; }
 .today-timeline .duration-timeline, .view-day .duration-timeline { min-width: 420px; }
@@ -593,7 +670,7 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
   .task-form { display: grid; grid-template-columns: minmax(180px, 1fr) 130px; gap: 0 10px; }
   .task-form .time-fields { grid-column: 1 / -1; grid-row: auto; }
   .task-form .time-fields .duration-input { grid-column: auto; grid-row: auto; }
-  .plan-list { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .plan-list { grid-template-columns: minmax(0, 1fr); }
   .deadline-strip { flex-direction: column; align-items: stretch; }
   .deadline-items { gap: 6px; }
   .deadline-chip { flex: 1 1 155px; }

@@ -3,7 +3,7 @@ import type { Task, TaskColor, WorkGridBackup } from './types'
 export const BACKUP_FORMAT = 'workgrid-backup'
 export const BACKUP_SCHEMA_VERSION = 8
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024
-export const APP_VERSION = '0.13.0'
+export const APP_VERSION = '0.14.0'
 
 const COLORS: TaskColor[] = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'purple']
 
@@ -117,12 +117,12 @@ function validateTask(value: unknown, index: number): Task {
   const planAllocation = value.planAllocation
   if (planDefinition !== undefined) {
     if (!isRecord(planDefinition) || !['countable', 'deadline'].includes(String(planDefinition.type))
+      || (planDefinition.sortOrder !== undefined && (!Number.isSafeInteger(planDefinition.sortOrder) || Number(planDefinition.sortOrder) < 0))
       || !Number.isInteger(planDefinition.totalUnits) || Number(planDefinition.totalUnits) < 0 || Number(planDefinition.totalUnits) > 500
       || (planDefinition.type === 'countable' && Number(planDefinition.totalUnits) < 1)
       || (planDefinition.type === 'deadline' && planDefinition.totalUnits !== 0)
       || typeof planDefinition.unitLabel !== 'string' || !planDefinition.unitLabel.trim() || planDefinition.unitLabel.length > 8
       || (planDefinition.deadline !== null && !isIsoDate(planDefinition.deadline))
-      || (planDefinition.type === 'deadline' && planDefinition.deadline === null)
       || typeof planDefinition.notes !== 'string' || planDefinition.notes.length > 1000
       || (planDefinition.reminderMinutes !== null && (typeof planDefinition.reminderMinutes !== 'number' || ![0, 60, 1440, 10080].includes(planDefinition.reminderMinutes)))
       || start !== null || deletedAt !== null || calendarImport !== undefined || seriesId !== null || recurrence !== null || planAllocation !== undefined) {
