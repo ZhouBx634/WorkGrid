@@ -7,9 +7,20 @@ export interface CloudSnapshot {
   updatedAt: string
 }
 
-export function taskFingerprint(tasks: Task[]) {
-  return JSON.stringify(tasks)
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue)
+  if (typeof value !== 'object' || value === null) return value
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalValue(item)]))
 }
+
+export function taskFingerprint(tasks: Task[]) {
+  // JSONB can reorder keys. Legacy local data also explicitly stores null optional
+  // fields that the cloud parser omits. Compare normalized content, never wire JSON.
+  const normalized = validateTaskList(tasks).sort((left, right) => left.id.localeCompare(right.id))
+  return JSON.stringify(canonicalValue(normalized))
+}
+
+export const compactTaskFingerprint = taskFingerprint
 
 export function parseCloudSnapshot(value: unknown): CloudSnapshot {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -33,18 +44,42 @@ export function cloudDataMatches(left: Task[], right: Task[]) {
   return taskFingerprint(left) === taskFingerprint(right)
 }
 
-export type IncomingCloudAction = 'unchanged' | 'apply-cloud' | 'conflict'
+export type IncomingCloudAction = 'unchanged' | 'apply-cloud' | 'upload-local' | 'conflict'
 
-export function classifyIncomingCloudSnapshot(localTasks: Task[], lastCloudFingerprint: string | null, incomingTasks: Task[]): IncomingCloudAction {
+export type InitialSyncAction = 'synced' | 'apply-cloud' | 'upload-local' | 'choose'
+
+export function classifyInitialSync(localTasks: Task[], cloudTasks: Task[], previousFingerprint: string | null): InitialSyncAction {
+  const localFingerprint = compactTaskFingerprint(localTasks)
+  const cloudFingerprint = compactTaskFingerprint(cloudTasks)
+  if (localFingerprint === cloudFingerprint) return 'synced'
+
+  if (previousFingerprint) {
+    const localUnchanged = localFingerprint === previousFingerprint
+    const cloudUnchanged = cloudFingerprint === previousFingerprint
+    if (localUnchanged && !cloudUnchanged && cloudTasks.length > 0) return 'apply-cloud'
+    if (cloudUnchanged && !localUnchanged && localTasks.length > 0) return 'upload-local'
+    return 'choose'
+  }
+
+  // On a new device, a blank local store should never silently erase a populated cloud copy.
+  if (localTasks.length === 0 && cloudTasks.length > 0) return 'apply-cloud'
+  if (cloudTasks.length === 0 && localTasks.length > 0) return 'upload-local'
+  if (localTasks.length === 0 && cloudTasks.length === 0) return 'synced'
+  return 'choose'
+}
+
+export function classifyIncomingCloudSnapshot(localTasks: Task[], baseFingerprint: string | null, incomingTasks: Task[]): IncomingCloudAction {
   const localFingerprint = taskFingerprint(localTasks)
   const incomingFingerprint = taskFingerprint(incomingTasks)
   if (localFingerprint === incomingFingerprint) return 'unchanged'
-  if (localFingerprint === lastCloudFingerprint) return 'apply-cloud'
+  if (localFingerprint === baseFingerprint) return 'apply-cloud'
+  if (incomingFingerprint === baseFingerprint) return 'upload-local'
   return 'conflict'
 }
 
 export function shouldApplyCloudSnapshot(localTasks: Task[], lastCloudFingerprint: string | null, incomingTasks: Task[]) {
-  return classifyIncomingCloudSnapshot(localTasks, lastCloudFingerprint, incomingTasks) !== 'conflict'
+  const action = classifyIncomingCloudSnapshot(localTasks, lastCloudFingerprint, incomingTasks)
+  return action === 'unchanged' || action === 'apply-cloud'
 }
 
 export function cloudSyncErrorMessage(error: unknown) {

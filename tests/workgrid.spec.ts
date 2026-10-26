@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { taskFingerprint } from '../src/cloudData'
 
 const STORAGE_KEY = 'workgrid.tasks.v2'
 
@@ -39,6 +40,14 @@ async function seedCloudSession(page: Page) {
       token_type: 'bearer',
       user,
     },
+  })
+}
+
+async function seedCloudBase(page: Page, tasks: unknown[]) {
+  const userId = '00000000-0000-4000-8000-000000000006'
+  await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
+    key: `workgrid.cloud-base.v1:${userId}`,
+    value: taskFingerprint(tasks as Parameters<typeof taskFingerprint>[0]),
   })
 }
 
@@ -564,10 +573,144 @@ test('first cloud sign-in requires a choice before replacing local tasks', async
   await expect(dialog).toContainText('云端')
   await expect(page.locator('.task-card', { hasText: '本机工作' })).toBeVisible()
 
-  await dialog.getByRole('button', { name: '使用云端数据' }).click()
+  await dialog.getByRole('button', { name: '用云端日程替换此设备' }).click()
   await expect(page.locator('.task-card', { hasText: '云端工作' })).toBeVisible()
   await expect(page.locator('.task-card', { hasText: '本机工作' })).toHaveCount(0)
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.id, STORAGE_KEY)).toBe('cloud-task')
+})
+
+test('a blank browser loads existing cloud tasks instead of asking to replace cloud with nothing', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const cloudTask = task({ id: 'preserved-cloud-task', title: '必须保留的云端日程' })
+  await seedTasks(page, [])
+  await seedCloudSession(page)
+  let updateCount = 0
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() !== 'GET') { updateCount += 1; await route.abort(); return }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [cloudTask], revision: 21, updated_at: '2026-10-19T02:00:00.000Z' }) })
+  })
+  await page.goto('/')
+
+  await expect(page.locator('.task-card', { hasText: '必须保留的云端日程' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: '选择首次同步数据' })).toHaveCount(0)
+  expect(updateCount).toBe(0)
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.id, STORAGE_KEY)).toBe(cloudTask.id)
+})
+
+test('a one-sided update applies automatically after the device has a sync baseline and can be recovered', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  const baseTask = task({ id: 'baseline-task', title: '同步基线日程' })
+  const remoteTask = { ...baseTask, title: '另一设备更新的日程' }
+  await seedTasks(page, [baseTask])
+  await seedCloudSession(page)
+  await seedCloudBase(page, [baseTask])
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [remoteTask], revision: 22, updated_at: '2026-10-19T02:10:00.000Z' }) })
+      return
+    }
+    if (route.request().method() === 'PATCH') {
+      const tasks = route.request().postDataJSON().tasks
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks, revision: 23, updated_at: '2026-10-19T02:11:00.000Z' }) })
+      return
+    }
+    await route.abort()
+  })
+  await page.goto('/')
+
+  await expect(page.locator('.task-card', { hasText: '另一设备更新的日程' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: '选择首次同步数据' })).toHaveCount(0)
+  await page.getByRole('button', { name: '云同步' }).click()
+  const account = page.getByRole('dialog', { name: '云同步' })
+  await expect(account.getByLabel('选择恢复点')).toContainText('恢复点：1 项')
+  await account.getByRole('button', { name: '恢复并同步' }).click()
+  await expect(page.locator('.task-card', { hasText: '同步基线日程' })).toBeVisible()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.title, STORAGE_KEY)).toBe('同步基线日程')
+})
+
+test('cloud sync is explicitly disabled on an unapproved preview origin', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Covered once in the desktop project')
+  await page.goto('http://localhost:4187/')
+  await expect(page.getByRole('button', { name: '云同步仅在正式网站启用' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '云同步', exact: true })).toHaveCount(0)
+})
+
+test('empty cloud cannot erase local tasks without a second confirmation and keeps a recovery point', async ({ page }) => {
+  const localTask = task({ id: 'protect-local', title: '空云端不能直接删除我' })
+  await seedTasks(page, [localTask])
+  await seedCloudSession(page)
+  await seedCloudBase(page, [localTask])
+  let writes = 0
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() !== 'GET') { writes++; return route.abort() }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [], revision: 24, updated_at: '2026-10-19T03:00:00.000Z' }) })
+  })
+  await page.goto('/')
+  const choice = page.getByRole('dialog', { name: '选择首次同步数据' })
+  await expect(choice).toBeVisible()
+  await choice.getByRole('button', { name: '用云端日程替换此设备' }).click()
+  const confirmation = page.getByRole('alertdialog', { name: '确认用空日程覆盖有内容的一侧？' })
+  await expect(confirmation).toBeVisible()
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').length, STORAGE_KEY)).toBe(1)
+  await confirmation.getByRole('button', { name: '返回检查' }).click()
+  await expect(confirmation).toHaveCount(0)
+  await choice.getByRole('button', { name: '用云端日程替换此设备' }).click()
+  await confirmation.getByRole('button', { name: '确认清空并继续' }).click()
+  await expect(choice).toHaveCount(0)
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]').length, STORAGE_KEY)).toBe(0)
+  const recovery = await page.evaluate(() => JSON.parse(localStorage.getItem('workgrid.cloud-recovery.v1') ?? '[]'))
+  expect(recovery[0].tasks[0].id).toBe(localTask.id)
+  expect(writes).toBe(0)
+})
+
+test('JSONB ordering and consecutive edits do not repeatedly ask for a sync decision', async ({ page }) => {
+  const localTask = task({ id: 'canonical-local', title: '无需反复确认' })
+  await seedTasks(page, [localTask])
+  await seedCloudSession(page)
+  let cloudTasks = [Object.fromEntries(Object.entries(localTask).reverse())]
+  let revision = 30
+  let patches = 0
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      patches++
+      cloudTasks = route.request().postDataJSON().tasks
+      revision++
+    } else if (route.request().method() !== 'GET') return route.abort()
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: cloudTasks, revision, updated_at: '2026-10-19T04:00:00.000Z' }) })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '云同步' }).click()
+  const account = page.getByRole('dialog', { name: '云同步' })
+  await expect(account.getByText('已同步', { exact: true })).toBeVisible()
+  await account.getByRole('button', { name: '关闭', exact: true }).click()
+  for (const title of ['自动同步第一步', '自动同步第二步']) {
+    await page.getByPlaceholder('输入工作内容').fill(title)
+    await page.getByRole('button', { name: '创建工作方块' }).click()
+    await expect.poll(() => cloudTasks.some((item) => item.title === title)).toBe(true)
+    await expect(page.getByRole('dialog', { name: '选择首次同步数据' })).toHaveCount(0)
+    await expect(page.getByRole('dialog', { name: '发现同步冲突' })).toHaveCount(0)
+  }
+  expect(patches).toBe(2)
+  expect(cloudTasks).toHaveLength(3)
+})
+
+test('a failed recovery write blocks replacing existing local tasks', async ({ page }) => {
+  const baseTask = task({ id: 'storage-safe', title: '恢复点失败必须保留我' })
+  await seedTasks(page, [baseTask])
+  await seedCloudSession(page)
+  await seedCloudBase(page, [baseTask])
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem
+    Storage.prototype.setItem = function(key, value) {
+      if (key === 'workgrid.cloud-recovery.v1') throw new DOMException('Storage full', 'QuotaExceededError')
+      original.call(this, key, value)
+    }
+  })
+  await page.route('http://127.0.0.1:54321/rest/v1/workgrid_data**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [{ ...baseTask, title: '不能覆盖的云端更新' }], revision: 35, updated_at: '2026-10-19T05:00:00.000Z' }) }))
+  await page.goto('/')
+  await page.getByRole('button', { name: '云同步' }).click()
+  await expect(page.getByRole('dialog', { name: '云同步' })).toContainText('无法创建恢复点')
+  await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? '[]')[0]?.title, STORAGE_KEY)).toBe(baseTask.title)
 })
 
 test('cloud initialization can retry without losing local tasks', async ({ page }, testInfo) => {

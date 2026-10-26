@@ -410,6 +410,11 @@ input:focus, select:focus { border-color: #81909b; background: var(--surface); }
 .sync-phase.phase-error, .sync-phase.phase-offline, .sync-phase.phase-conflict { color: var(--danger); }
 .account-signout { width: auto; order: initial; }
 .account-tools { display: flex; justify-content: flex-end; margin: 8px 0 -8px; }
+.cloud-recovery-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-right: auto; color: var(--muted); font-size: 11px; min-width: 0; width: 100%; }
+.cloud-recovery-tools label { flex: 1; min-width: 0; }
+.cloud-recovery-tools select { display: block; width: 100%; max-width: 100%; margin-top: 6px; }
+.cloud-recovery-tools small { flex-basis: 100%; }
+.cloud-sync-button:disabled { cursor: not-allowed; opacity: .6; }
 .danger-text-button { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: var(--danger); }
 .sync-choice-backdrop { z-index: 70; }
 .sync-choice-dialog { width: min(500px, 100%); }

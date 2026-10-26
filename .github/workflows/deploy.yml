@@ -23,6 +23,7 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      VITE_CLOUD_SYNC_ALLOWED_ORIGINS: https://zhoubx634.github.io
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

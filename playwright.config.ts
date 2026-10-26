@@ -24,6 +24,7 @@ export default defineConfig({
       ...process.env,
       VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
       VITE_SUPABASE_ANON_KEY: 'workgrid-browser-regression-key',
+      VITE_CLOUD_SYNC_ALLOWED_ORIGINS: 'http://127.0.0.1:4187',
     },
   },
   projects: [
