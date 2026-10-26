@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createPlan, deadlineLabel, duePlanReminders, mergePlanParts, planChildren, planStats, removePlan, splitPlan } from './src/plans.ts'
+import { createPlan, deadlineLabel, duePlanReminders, mergePlanParts, orderedPlans, pendingPlanGroups, planChildren, planStats, removePlan, reorderPlans, splitPlan, updatePlanDefinition } from './src/plans.ts'
 import { createBackup, parseBackupText, planImport, validateTaskList } from './src/backup.ts'
 import { parseCloudSnapshot, cloudDataMatches, taskFingerprint, classifyIncomingCloudSnapshot } from './src/cloudData.ts'
 import { durationFromTimes, endFromDuration } from './src/scheduling.ts'
@@ -110,3 +110,55 @@ assert.doesNotThrow(() => validateTaskList(justChild.map(t => t.id === merged.id
 assert.equal(deleteSelectedTasks(justChild, new Set([merged.id])), justChild)
 assert.equal(JSON.stringify(deletionTasks), beforeDeletion)
 console.log('long-term plan, batch deletion, and time-input tests passed')
+
+// Sorting changes only plan metadata, preserves legacy order, and survives JSONB reordering.
+const sortingInput = [ordinary, plan, children[0], ddl, otherPlan]
+const sortingOriginal = JSON.stringify(sortingInput)
+assert.deepEqual(orderedPlans(sortingInput).map(t => t.id), [plan.id, ddl.id, otherPlan.id])
+const sorted = reorderPlans(sortingInput, otherPlan.id, plan.id)
+assert.deepEqual(orderedPlans(sorted).map(t => t.id), [otherPlan.id, plan.id, ddl.id])
+assert.equal(sorted[0], ordinary)
+assert.equal(sorted[2], children[0])
+assert.equal(JSON.stringify(sortingInput), sortingOriginal)
+assert.equal(reorderPlans(sorted, plan.id, plan.id), sorted)
+assert.equal(reorderPlans(sorted, 'missing', plan.id), sorted)
+for (const roundTrip of [parseBackupText(JSON.stringify(createBackup(sorted))).tasks, parseCloudSnapshot({tasks: sorted, revision: 5, updated_at: deletedAt}).tasks.reverse()]) {
+  assert.deepEqual(orderedPlans(roundTrip).map(t => t.id), [otherPlan.id, plan.id, ddl.id])
+}
+assert.throws(() => validateTaskList([{...plan, planDefinition:{...definition, sortOrder: -1}}]))
+assert.throws(() => validateTaskList([{...plan, planDefinition:{...definition, sortOrder: Infinity}}]))
+
+// Quantity and deadline are independent; converting old deadline work never changes its schedule.
+const work = {...ddlWork, start:'2026-10-18T02:12:00.000Z', status:'completed', completedAt:deletedAt, planAllocation:{planId:ddl.id, units:[]}}
+const conversionInput = [ordinary, ddl, work]
+const combinedDefinition = {...ddl.planDefinition, type:'countable', totalUnits: 3, unitLabel:'节', sortOrder:2}
+const converted = updatePlanDefinition(conversionInput, ddl.id, combinedDefinition)
+assert.deepEqual(converted[2], {...work, planAllocation:{planId:ddl.id, units:[1]}})
+assert.equal(converted[1].planDefinition.deadline, ddl.planDefinition.deadline)
+assert.equal(planStats(converted, converted[1]).completed, 1)
+const splitConverted = splitPlan(converted, ddl.id, 1)
+assert.equal(planChildren(splitConverted, ddl.id).length, 3)
+assert.equal(splitConverted[0], ordinary)
+assert.doesNotThrow(() => validateTaskList(splitConverted))
+assert.equal(duePlanReminders(splitConverted, new Date('2026-10-19T15:59:00.000Z')).length, 1)
+assert.throws(() => updatePlanDefinition(converted, ddl.id, {...combinedDefinition,totalUnits:0}))
+assert.throws(() => updatePlanDefinition(converted, ddl.id, ddl.planDefinition))
+assert.doesNotThrow(() => validateTaskList([{...ddl,planDefinition:{...ddl.planDefinition,deadline:null,reminderMinutes:null}}]))
+assert.deepEqual(parseBackupText(JSON.stringify(createBackup(splitConverted))).tasks, JSON.parse(JSON.stringify(splitConverted)))
+assert.equal(cloudDataMatches(splitConverted, parseCloudSnapshot({tasks:splitConverted,revision:6,updated_at:deletedAt}).tasks), true)
+console.log('plan sorting, independent deadline/quantity, and legacy conversion tests passed')
+
+const pendingInput = [ordinary, plan, ...children.slice().reverse(),
+  {...ddl, status:'completed'}, {...ddlWork, id:'completed-parent-child'},
+  {...children[0], id:'scheduled', start:'2026-10-15T02:12:00.000Z'},
+  {...children[0], id:'done', status:'completed'},
+  {...children[0], id:'deleted', deletedAt},
+  {...children[0], id:'orphan', planAllocation:{planId:'missing-plan',units:[1]}}]
+const pendingBefore = JSON.stringify(pendingInput)
+const pendingGroups = pendingPlanGroups(pendingInput)
+assert.equal(pendingGroups.length, 1)
+assert.equal(pendingGroups[0].plan, plan)
+assert.deepEqual(pendingGroups[0].parts, children)
+assert.equal(JSON.stringify(pendingInput), pendingBefore)
+assert.deepEqual(pendingPlanGroups(pendingInput.map(t => t.id === plan.id ? {...t, deletedAt} : t)), [])
+console.log('pending lesson shortcuts preserve data and exclude scheduled, completed, deleted, and orphaned work')

@@ -43,6 +43,7 @@ export interface Task {
 }
 
 export interface LongTermPlan {
+  sortOrder?: number
   type: 'countable' | 'deadline'
   totalUnits: number
   unitLabel: string

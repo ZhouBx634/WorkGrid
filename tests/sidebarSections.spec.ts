@@ -1,0 +1,126 @@
+import { expect, test, type Page } from '@playwright/test'
+
+const key = 'workgrid.tasks.v2'
+const task = { id: 'ordinary', title: '原来普通日程', color: 'blue', duration: 95, start: null, createdAt: '2026-10-01T00:00:00.000Z', status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: ['学习'], deletedAt: null }
+const plan = { ...task, id: 'plan-a', title: '高数课程', tags: [], planDefinition: { type: 'countable', totalUnits: 2, unitLabel: '节', deadline: null, notes: '', reminderMinutes: null } }
+const secondPlan = { ...plan, id: 'plan-b', title: '英语课程' }
+const lesson = { ...task, id: 'lesson-a', title: '高数第一节', tags: [], planAllocation: { planId: plan.id, units: [1] } }
+const secondLesson = { ...lesson, id: 'lesson-b', title: '英语第一节', planAllocation: { planId: secondPlan.id, units: [1] } }
+const tasks = [task, plan, secondPlan, lesson, secondLesson]
+async function setup(page: Page) {
+  await page.addInitScript(({ key, tasks }) => { if (!localStorage.getItem('sidebar-seeded')) { localStorage.setItem(key, JSON.stringify(tasks)); localStorage.setItem('sidebar-seeded', '1') } }, { key, tasks })
+  await page.goto('/')
+}
+async function saved(page: Page) { return page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '[]'), key) }
+
+test('two compact section headings collapse independently and adding shows all fields only on demand', async ({ page }) => {
+  await setup(page)
+  const ordinaryToggle = page.locator('.ordinary-schedules .sidebar-section-toggle')
+  const planToggle = page.locator('.long-term-plans .sidebar-section-toggle')
+  expect((await ordinaryToggle.boundingBox())!.height).toBeLessThanOrEqual(36)
+  expect((await planToggle.boundingBox())!.height).toBeLessThanOrEqual(36)
+  await expect(page.locator('.task-form')).toHaveCount(0)
+  await expect(page.locator('.plan-shortcuts')).toHaveCount(0)
+  await ordinaryToggle.click()
+  await expect(page.getByRole('button', { name: '编辑 原来普通日程', exact: true })).toBeHidden()
+  await expect(planToggle).toHaveAttribute('aria-expanded', 'true')
+  await planToggle.click()
+  await expect(page.getByRole('button', { name: '编辑计划 高数课程', exact: true })).toBeHidden()
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '添加普通日程', exact: true })
+  await expect(dialog.getByLabel('工作内容', { exact: true })).toBeFocused()
+  await expect(dialog.getByLabel('预计时长（分钟）')).toBeVisible()
+  await expect(dialog.getByLabel('开始时间（可暂不安排）')).toBeVisible()
+  await expect(dialog.getByLabel('标签（逗号分隔）')).toBeVisible()
+  await expect(dialog.getByRole('group', { name: '方块颜色' })).toBeVisible()
+  await dialog.getByLabel('工作内容', { exact: true }).fill('有颜色标签的日程')
+  await dialog.getByLabel('预计时长（分钟）').fill('56')
+  await dialog.getByLabel('标签（逗号分隔）').fill('复习，重要')
+  await dialog.getByRole('button', { name: '绿色', exact: true }).click()
+  await dialog.getByRole('button', { name: '创建工作方块' }).click()
+  await expect(dialog).toHaveCount(0)
+  const data = await saved(page)
+  expect(data).toHaveLength(tasks.length + 1)
+  expect(data[0]).toMatchObject({ title: '有颜色标签的日程', duration: 56, color: 'green', tags: ['复习', '重要'], start: null })
+  expect(data.slice(1)).toEqual(tasks)
+  await expect(ordinaryToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(planToggle).toHaveAttribute('aria-expanded', 'false')
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
+  await dialog.getByLabel('工作内容', { exact: true }).fill('不保存的内容')
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  expect(await saved(page)).toEqual(data)
+})
+
+test('temporary shortcut is scoped to its plan, keeps original disclosure state, and closes with Escape', async ({ page }) => {
+  await setup(page)
+  const ordinaryToggle = page.locator('.ordinary-schedules .sidebar-section-toggle')
+  await ordinaryToggle.click()
+  const card = page.locator('[data-plan-id="plan-a"]')
+  await card.getByRole('button', { name: '查看待安排方块（1）' }).click()
+  const source = card.getByRole('button', { name: '快捷安排 高数课程' })
+  await source.click()
+  const quick = page.getByRole('complementary', { name: '快捷安排', exact: true })
+  await expect(quick).toContainText('高数第一节')
+  await expect(quick).not.toContainText('英语第一节')
+  await expect(page.locator('.backlog-base')).toHaveAttribute('inert', '')
+  await page.keyboard.press('Escape')
+  await expect(quick).toHaveCount(0)
+  await expect(source).toBeFocused()
+  await expect(ordinaryToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(card.getByRole('button', { name: '查看待安排方块（1）' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(card.locator('.task-card')).toBeVisible()
+  await page.getByRole('button', { name: '快捷安排 英语课程' }).click()
+  await expect(quick).toContainText('英语第一节')
+  await expect(quick).not.toContainText('高数第一节')
+  await quick.getByRole('button', { name: '关闭快捷安排' }).click()
+  expect(await saved(page)).toEqual(tasks)
+})
+
+test('shortcut arrange opens as an accent-colored movable window', async ({ page, isMobile }) => {
+  await setup(page)
+  await page.getByRole('button', { name: '快捷安排 高数课程' }).click()
+  const quick = page.getByRole('complementary', { name: '快捷安排', exact: true })
+  const heading = quick.locator('.shortcuts-heading')
+  await expect(page.getByRole('button', { name: '快捷安排 高数课程' })).toHaveCSS('background-color', 'rgb(255, 241, 233)')
+  await quick.evaluate(async (node) => { await Promise.all(node.getAnimations().map((animation) => animation.finished)) })
+  const before = await quick.boundingBox()
+  expect(before).not.toBeNull()
+  const start = { x: before!.x + 90, y: before!.y + 15 }
+  if (isMobile) {
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] })
+    for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: start.x + 90 * i / 6, y: start.y + 55 * i / 6 }] })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await cdp.detach()
+  } else {
+    await page.mouse.move(start.x, start.y)
+    await page.mouse.down()
+    await page.mouse.move(start.x + 90, start.y + 55, { steps: 6 })
+    await page.mouse.up()
+  }
+  const after = await quick.boundingBox()
+  expect(after!.x).toBeGreaterThan(before!.x + 50)
+  expect(after!.y).toBeGreaterThan(before!.y + 30)
+  await expect(heading).not.toHaveClass(/is-dragging-window/)
+  await expect(page.locator('.drag-overlay')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(await saved(page)).toEqual(tasks)
+  await quick.getByRole('button', { name: '移动快捷安排窗口' }).focus()
+  await page.keyboard.press('ArrowLeft')
+  expect((await quick.boundingBox())!.x).toBeLessThan(after!.x)
+  await page.setViewportSize({ width: 360, height: 600 })
+  await expect.poll(async () => { const box = (await quick.boundingBox())!; return box.x >= 0 && box.y >= 0 && box.x + box.width <= 360 && box.y + box.height <= 600 }).toBe(true)
+  await quick.getByRole('button', { name: '关闭快捷安排' }).click()
+  await expect(quick).toHaveCount(0)
+})
+
+test('a failed create leaves its dialog open and never discards existing schedules', async ({ page }) => {
+  await setup(page)
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
+  await page.getByPlaceholder('输入工作内容').fill('存储失败保留草稿')
+  await page.evaluate(key => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function (name, value) { if (name === key) throw new DOMException('Full', 'QuotaExceededError'); original.call(this, name, value) } }, key)
+  await page.getByRole('button', { name: '创建工作方块' }).click()
+  await expect(page.getByRole('dialog', { name: '添加普通日程', exact: true })).toBeVisible()
+  await expect(page.locator('.toast')).toContainText('操作未保存')
+  expect(await saved(page)).toEqual(tasks)
+})

@@ -24,6 +24,7 @@ async function seed(page: Page, tasks = [base]) {
 }
 
 async function add(page: Page, title: string) {
+  await page.getByRole('button', { name: '添加普通日程', exact: true }).click()
   await page.getByPlaceholder('输入工作内容').fill(title)
   await page.getByRole('button', { name: '创建工作方块' }).click()
 }

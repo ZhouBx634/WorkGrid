@@ -2,11 +2,65 @@ import type { LongTermPlan, Task, TaskColor } from './types.ts'
 
 function id() { return globalThis.crypto.randomUUID() }
 
+/** Legacy plans keep their document order until the user explicitly sorts them. */
+export function orderedPlans(tasks: Task[]) {
+  return tasks.filter((task) => task.planDefinition && !task.deletedAt)
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => (a.task.planDefinition!.sortOrder ?? a.index) - (b.task.planDefinition!.sortOrder ?? b.index) || a.index - b.index)
+    .map(({ task }) => task)
+}
+
+export function reorderPlans(tasks: Task[], fromId: string, toId: string): Task[] {
+  const plans = orderedPlans(tasks)
+  const from = plans.findIndex((task) => task.id === fromId)
+  const to = plans.findIndex((task) => task.id === toId)
+  if (from < 0 || to < 0 || from === to) return tasks
+  plans.splice(to, 0, plans.splice(from, 1)[0])
+  const ranks = new Map(plans.map((task, index) => [task.id, index]))
+  return tasks.map((task) => ranks.has(task.id) ? { ...task, planDefinition: { ...task.planDefinition!, sortOrder: ranks.get(task.id)! } } : task)
+}
+
+/** Preserve scheduled work when a formerly uncounted plan gains a quantity. */
+export function updatePlanDefinition(tasks: Task[], planId: string, definition: LongTermPlan): Task[] {
+  const plan = tasks.find((task) => task.id === planId && task.planDefinition)
+  if (!plan) throw new Error('计划已不存在')
+  const children = planChildren(tasks, planId)
+  if (definition.type === 'countable') {
+    const required = plan.planDefinition!.type === 'deadline' ? children.length : Math.max(0, ...children.flatMap((task) => task.planAllocation!.units))
+    if (definition.totalUnits < required) throw new Error(`总量不能少于已拆分的编号 ${required}`)
+  } else if (children.some((task) => task.planAllocation!.units.length)) {
+    throw new Error('已有编号日程的计划请保留数量拆分；截止时间仍可独立修改')
+  }
+  let unit = 0
+  return tasks.map((task) => {
+    if (task.id === planId) return { ...task, planDefinition: definition }
+    if (task.planAllocation?.planId === planId && plan.planDefinition!.type === 'deadline' && definition.type === 'countable') {
+      return { ...task, planAllocation: { planId, units: [++unit] } }
+    }
+    return task
+  })
+}
+
 export function createPlan(title: string, color: TaskColor, duration: number, definition: LongTermPlan): Task {
   return { id: id(), title: title.trim(), color, duration, start: null, createdAt: new Date().toISOString(), status: 'todo', completedAt: null, reminderMinutes: null, remindedAt: null, endReminder: false, endRemindedAt: null, tags: [], deletedAt: null, planDefinition: definition }
 }
 
 export function planChildren(tasks: Task[], planId: string) { return tasks.filter((task) => task.planAllocation?.planId === planId) }
+
+/** A shortcut to existing unfinished lessons, never a second copy of their data. */
+export function pendingPlanGroups(tasks: Task[]) {
+  const groups = new Map<string, Task[]>()
+  for (const task of tasks) {
+    if (!task.planAllocation || task.deletedAt || task.start || task.status === 'completed') continue
+    const parts = groups.get(task.planAllocation.planId) ?? []
+    parts.push(task)
+    groups.set(task.planAllocation.planId, parts)
+  }
+  return orderedPlans(tasks).filter((plan) => plan.status !== 'completed' && groups.has(plan.id)).map((plan) => ({
+    plan,
+    parts: groups.get(plan.id)!.sort((a, b) => (a.planAllocation!.units[0] ?? 0) - (b.planAllocation!.units[0] ?? 0)),
+  }))
+}
 
 export function planStats(tasks: Task[], plan: Task) {
   const children = planChildren(tasks, plan.id)
