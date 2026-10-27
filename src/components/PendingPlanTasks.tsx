@@ -62,7 +62,10 @@ export default function PendingPlanTasks({ tasks, plan, selectedId, dragging, on
   useEffect(() => {
     const previousFocus = document.querySelector<HTMLElement>(`[data-quick-plan-id="${CSS.escape(plan.id)}"]`)
     closeRef.current?.focus({ preventScroll: true })
-    return () => { requestAnimationFrame(() => { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) }) }
+    return () => { requestAnimationFrame(() => {
+      // Switching plans mounts a new window; let its close button keep focus.
+      if (previousFocus?.isConnected && !document.querySelector('.plan-shortcuts')) previousFocus.focus({ preventScroll: true })
+    }) }
   }, [])
   useEffect(() => {
     function escape(event: KeyboardEvent) {
