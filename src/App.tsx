@@ -786,7 +786,7 @@ function App() {
       {batchDeleteReview && <BatchDeleteDialog review={batchDeleteReview} onClose={() => setBatchDeleteReview(null)} onConfirm={(deleteChildren) => applyBatchDelete(batchDeleteReview, deleteChildren)} />}
       <div className="workspace">
         <DroppableBacklog>
-          <div className="backlog-base" inert={!!quickPlan}>
+          <div className="backlog-base">
           <section className="ordinary-schedules" aria-label="普通日程">
           <div className="sidebar-section-heading"><h2><button type="button" className="sidebar-section-toggle" aria-expanded={ordinaryOpen} aria-controls="ordinary-content" onClick={() => setOrdinaryOpen(!ordinaryOpen)}><ChevronDown size={14} />普通日程<span>{unscheduled.length}</span></button></h2><button type="button" className="icon-button section-add" aria-label="添加普通日程" title="添加普通日程" onClick={() => { setOrdinaryOpen(true); setCreatingTask(true) }}><Plus size={16} /></button></div>
           <div id="ordinary-content" className="sidebar-section-body" hidden={!ordinaryOpen}>
